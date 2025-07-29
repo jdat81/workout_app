@@ -7,16 +7,6 @@ from pathlib import Path
 import time
 import calendar
 
-# Audio libraries
-try:
-    import beepy
-    BEEPY_AVAILABLE = True
-except ImportError:
-    BEEPY_AVAILABLE = False
-    st.warning("Beepy library not installed. Install with: pip install beepy")
-
-import sys
-
 # Database setup
 def init_database():
     """Initialize SQLite database with tables"""
@@ -332,7 +322,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS and Audio
 st.markdown("""
 <style>
     .main { padding: 0rem 1rem; }
@@ -617,61 +607,6 @@ def format_time(seconds):
     secs = int(seconds % 60)
     return f"{minutes:02d}:{secs:02d}"
 
-# Audio functions
-def play_countdown_beep():
-    """Play countdown beep (short)"""
-    try:
-        if BEEPY_AVAILABLE:
-            beepy.beep(sound=1)  # Default beep
-        else:
-            # Fallback to ASCII bell
-            print('\a', end='', flush=True)
-            sys.stdout.flush()
-    except Exception as e:
-        print(f"Audio error: {e}")
-
-def play_transition_beep():
-    """Play transition beep (longer)"""
-    try:
-        if BEEPY_AVAILABLE:
-            beepy.beep(sound=2)  # Coin sound
-        else:
-            # Multiple ASCII bells for longer sound
-            print('\a\a', end='', flush=True)
-            sys.stdout.flush()
-    except Exception as e:
-        print(f"Audio error: {e}")
-
-def play_timer_beep():
-    """Play timer completion beep"""
-    try:
-        if BEEPY_AVAILABLE:
-            beepy.beep(sound=3)  # Ping sound
-        else:
-            print('\a\a\a', end='', flush=True)
-            sys.stdout.flush()
-    except Exception as e:
-        print(f"Audio error: {e}")
-
-def play_completion_beep():
-    """Play workout completion beep (multiple beeps)"""
-    try:
-        if BEEPY_AVAILABLE:
-            beepy.beep(sound=4)  # Success sound
-            time.sleep(0.3)
-            beepy.beep(sound=4)
-            time.sleep(0.3)
-            beepy.beep(sound=4)
-        else:
-            # Multiple ASCII bells with timing
-            for i in range(3):
-                print('\a\a', end='', flush=True)
-                sys.stdout.flush()
-                if i < 2:  # Don't sleep after last beep
-                    time.sleep(0.3)
-    except Exception as e:
-        print(f"Audio error: {e}")
-
 # Main App
 def main():
     st.title("FitTrack Pro")
@@ -739,28 +674,25 @@ def cardio_core_page():
     
     with col1:
         if st.button("Test Countdown Beep"):
-            play_countdown_beep()
-            st.success("Countdown beep played!")
+            st.components.v1.html('<script>window.countdownBeep && window.countdownBeep();</script>', height=0)
+            st.success("Countdown beep triggered!")
     
     with col2:
         if st.button("Test Transition Beep"):
-            play_transition_beep()
-            st.success("Transition beep played!")
+            st.components.v1.html('<script>window.transitionBeep && window.transitionBeep();</script>', height=0)
+            st.success("Transition beep triggered!")
     
     with col3:
         if st.button("Test Timer Beep"):
-            play_timer_beep()
-            st.success("Timer beep played!")
+            st.components.v1.html('<script>window.timerBeep && window.timerBeep();</script>', height=0)
+            st.success("Timer beep triggered!")
     
     with col4:
         if st.button("Test Completion Beep"):
-            play_completion_beep()
-            st.success("Completion beep played!")
+            st.components.v1.html('<script>window.completionBeep && window.completionBeep();</script>', height=0)
+            st.success("Completion beep triggered!")
     
-    if BEEPY_AVAILABLE:
-        st.info("🎵 Using Beepy library for audio")
-    else:
-        st.info("🔔 Using ASCII bell character (\\a) for audio - install beepy for better sounds: `pip install beepy`")
+    st.info("🔊 Using HTML5 audio elements. Click test buttons to verify audio is working.")
     
     st.divider()
     
@@ -895,17 +827,17 @@ def cardio_core_page():
             
             # Countdown beeps for last 10 seconds
             if remaining_seconds <= 10 and remaining_seconds > 0 and remaining_seconds != st.session_state.last_beep_second:
-                play_countdown_beep()
+                st.components.v1.html('<script>window.countdownBeep && window.countdownBeep();</script>', height=0)
                 st.session_state.last_beep_second = remaining_seconds
             
             # Transition beep when interval ends
             if remaining_seconds == 0 and st.session_state.last_beep_second != 0:
                 if st.session_state.current_set == 4 and st.session_state.current_phase == "WORK":
                     # Workout completion beep
-                    play_completion_beep()
+                    st.components.v1.html('<script>window.completionBeep && window.completionBeep();</script>', height=0)
                 else:
                     # Regular transition beep
-                    play_transition_beep()
+                    st.components.v1.html('<script>window.transitionBeep && window.transitionBeep();</script>', height=0)
                 st.session_state.last_beep_second = 0
             
             # Auto refresh
@@ -1079,7 +1011,7 @@ def workout_page():
                     st.session_state.timer_running = False
                     st.markdown('<div class="timer-display">00:00 Complete</div>', unsafe_allow_html=True)
                     # Completion beep for timer
-                    play_timer_beep()
+                    st.components.v1.html('<script>window.timerBeep && window.timerBeep();</script>', height=0)
                 else:
                     st.markdown(f'<div class="timer-display">{format_time(remaining)}</div>', unsafe_allow_html=True)
                     
@@ -1090,12 +1022,12 @@ def workout_page():
                     
                     # Countdown beeps for last 10 seconds
                     if remaining_seconds <= 10 and remaining_seconds > 0 and remaining_seconds != st.session_state.timer_last_beep_second:
-                        play_countdown_beep()
+                        st.components.v1.html('<script>window.countdownBeep && window.countdownBeep();</script>', height=0)
                         st.session_state.timer_last_beep_second = remaining_seconds
                     
                     # Completion beep when timer ends
                     if remaining_seconds == 0 and st.session_state.timer_last_beep_second != 0:
-                        play_timer_beep()
+                        st.components.v1.html('<script>window.timerBeep && window.timerBeep();</script>', height=0)
                         st.session_state.timer_last_beep_second = 0
                     
                     time.sleep(0.1)
