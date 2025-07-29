@@ -12,7 +12,7 @@ def init_database():
     """Initialize SQLite database with tables"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
-    
+
     # Create tables
     c.execute('''CREATE TABLE IF NOT EXISTS workouts
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,7 +22,7 @@ def init_database():
                   reps TEXT,
                   notes TEXT,
                   exercise_order INTEGER)''')
-    
+
     c.execute('''CREATE TABLE IF NOT EXISTS workout_history
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   date TEXT NOT NULL,
@@ -30,21 +30,21 @@ def init_database():
                   exercises_completed INTEGER,
                   duration TEXT,
                   timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    
+
     c.execute('''CREATE TABLE IF NOT EXISTS exercise_completion
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   day TEXT NOT NULL,
                   exercise_index INTEGER,
                   completed BOOLEAN,
                   date TEXT)''')
-    
+
     conn.commit()
-    
+
     # Check if workouts exist, if not, populate with default
     c.execute("SELECT COUNT(*) FROM workouts")
     if c.fetchone()[0] == 0:
         populate_default_workouts(conn)
-    
+
     conn.close()
 
 def populate_default_workouts(conn):
@@ -86,7 +86,7 @@ def populate_default_workouts(conn):
             ("Mobility Flow", 1, "10 min", "Full body stretching sequence")
         ]
     }
-    
+
     c = conn.cursor()
     for day, exercises in default_workouts.items():
         for i, (name, sets, reps, notes) in enumerate(exercises):
@@ -120,19 +120,19 @@ def toggle_exercise_completion(day, exercise_index, completed):
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
     today = datetime.now().strftime("%Y-%m-%d")
-    
+
     # Check if record exists
     c.execute("SELECT id FROM exercise_completion WHERE day = ? AND exercise_index = ? AND date = ?",
               (day, exercise_index, today))
     result = c.fetchone()
-    
+
     if result:
         c.execute("UPDATE exercise_completion SET completed = ? WHERE id = ?",
                  (completed, result[0]))
     else:
         c.execute("INSERT INTO exercise_completion (day, exercise_index, completed, date) VALUES (?, ?, ?, ?)",
                  (day, exercise_index, completed, today))
-    
+
     conn.commit()
     conn.close()
 
@@ -159,20 +159,20 @@ def get_stats():
     """Get workout statistics"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
-    
+
     # Total workouts
     c.execute("SELECT COUNT(*) FROM workout_history")
     total = c.fetchone()[0]
-    
+
     # This week
     week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
     c.execute("SELECT COUNT(*) FROM workout_history WHERE date >= ?", (week_ago,))
     this_week = c.fetchone()[0]
-    
+
     # Calculate streak
     c.execute("SELECT DISTINCT date FROM workout_history ORDER BY date DESC")
     dates = [row[0] for row in c.fetchall()]
-    
+
     streak = 0
     if dates:
         last_date = datetime.strptime(dates[0], "%Y-%m-%d").date()
@@ -185,7 +185,7 @@ def get_stats():
                     last_date = workout_date
                 else:
                     break
-    
+
     conn.close()
     return total, this_week, streak
 
@@ -193,11 +193,11 @@ def add_exercise(day, name, sets, reps, notes):
     """Add new exercise to a workout day"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
-    
+
     # Get max order for the day
     c.execute("SELECT MAX(exercise_order) FROM workouts WHERE day = ?", (day,))
     max_order = c.fetchone()[0] or -1
-    
+
     c.execute("INSERT INTO workouts (day, exercise_name, sets, reps, notes, exercise_order) VALUES (?, ?, ?, ?, ?, ?)",
               (day, name, sets, reps, notes, max_order + 1))
     conn.commit()
@@ -215,37 +215,47 @@ def update_exercise_order(day, exercise_id, new_order):
     """Update exercise order"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
-    
+
     # Get current order
     c.execute("SELECT exercise_order FROM workouts WHERE id = ?", (exercise_id,))
     current_order = c.fetchone()[0]
-    
+
     # Swap orders
     c.execute("SELECT id FROM workouts WHERE day = ? AND exercise_order = ?", (day, new_order))
     swap_id = c.fetchone()
-    
+
     if swap_id:
         c.execute("UPDATE workouts SET exercise_order = ? WHERE id = ?", (current_order, swap_id[0]))
-    
+
     c.execute("UPDATE workouts SET exercise_order = ? WHERE id = ?", (new_order, exercise_id))
-    
+
     conn.commit()
     conn.close()
 
 def replace_exercise(exercise_id, new_name, new_notes=None):
-    """Replace an exercise with another"""
+    """Replace an exercise with another from the database"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
-    
+
     if new_notes:
         c.execute("UPDATE workouts SET exercise_name = ?, notes = ? WHERE id = ?",
                  (new_name, new_notes, exercise_id))
     else:
         c.execute("UPDATE workouts SET exercise_name = ? WHERE id = ?",
                  (new_name, exercise_id))
-    
+
     conn.commit()
     conn.close()
+
+def replace_exercise_manually(exercise_id, new_name, new_sets, new_reps, new_notes):
+    """Replace an exercise manually with new details"""
+    conn = sqlite3.connect('fittrack.db')
+    c = conn.cursor()
+    c.execute("UPDATE workouts SET exercise_name = ?, sets = ?, reps = ?, notes = ? WHERE id = ?",
+              (new_name, new_sets, new_reps, new_notes, exercise_id))
+    conn.commit()
+    conn.close()
+
 
 # Initialize Streamlit
 st.set_page_config(
@@ -341,16 +351,21 @@ init_database()
 # Load exercise database
 @st.cache_data
 def load_exercise_database():
-    csv_path = Path.home() / "Downloads" / "megaGymDataset.csv"
+    # Use a relative path for the CSV file
+    csv_path = Path('megaGymDataset.csv')
     if csv_path.exists():
         try:
+            # Drop the unnamed column if it exists
             df = pd.read_csv(csv_path)
+            if 'Unnamed: 0' in df.columns:
+                df = df.drop(columns=['Unnamed: 0'])
             return df, True
         except Exception as e:
             st.error(f"Error loading exercise database: {e}")
             return pd.DataFrame(), False
     else:
-        # Create minimal exercise database
+        # Create minimal exercise database if megaGymDataset.csv is not found
+        st.warning("megaGymDataset.csv not found. Using a minimal exercise database.")
         return pd.DataFrame({
             'Title': ['Push-ups', 'Squats', 'Plank', 'Lunges', 'Burpees'],
             'BodyPart': ['Chest', 'Legs', 'Core', 'Legs', 'Full Body'],
@@ -358,6 +373,7 @@ def load_exercise_database():
             'Level': ['Beginner', 'Beginner', 'Beginner', 'Beginner', 'Intermediate'],
             'Type': ['Strength', 'Strength', 'Strength', 'Strength', 'Cardio']
         }), False
+
 
 exercise_db, db_loaded = load_exercise_database()
 
@@ -383,22 +399,22 @@ def format_time(seconds):
 def main():
     st.title("FitTrack Pro")
     st.markdown("Your personal workout companion with persistent data storage")
-    
+
     if db_loaded:
         st.success(f"Loaded {len(exercise_db)} exercises from megaGymDataset.csv")
     else:
-        st.info("Using default exercise database. Place megaGymDataset.csv in Downloads folder for full database.")
-    
+        st.info("Using default exercise database. Place megaGymDataset.csv in the same folder as the app for the full database.")
+
     # Sidebar navigation
     with st.sidebar:
         st.header("Navigation")
         page = st.radio(
             "Select Page",
-            ["Workout", "Browse & Replace", "Edit Workouts", 
+            ["Workout", "Browse & Replace", "Edit Workouts",
              "Calendar", "Progress", "Guide"],
             label_visibility="collapsed"
         )
-    
+
     if page == "Workout":
         workout_page()
     elif page == "Browse & Replace":
@@ -415,10 +431,10 @@ def main():
 def workout_page():
     # Timer section
     col1, col2 = st.columns(2)
-    
+
     with col1:
         st.subheader("Set Timer")
-        
+
         # Timer preset
         preset_options = {
             "Stopwatch": 0,
@@ -430,41 +446,41 @@ def workout_page():
             "3min": 180,
             "5min": 300
         }
-        
+
         selected_preset = st.selectbox(
             "Timer Preset",
             options=list(preset_options.keys()),
             index=0
         )
-        
+
         if selected_preset != st.session_state.timer_preset:
             st.session_state.timer_preset = selected_preset
             st.session_state.timer_elapsed = 0
             st.session_state.timer_running = False
-        
+
         timer_col1, timer_col2, timer_col3 = st.columns(3)
-        
+
         with timer_col1:
             if st.button("Start", key="start_timer", disabled=st.session_state.timer_running):
                 st.session_state.timer_running = True
                 st.session_state.timer_start = time.time() - st.session_state.timer_elapsed
                 st.rerun()
-        
+
         with timer_col2:
             if st.button("Pause", key="pause_timer", disabled=not st.session_state.timer_running):
                 st.session_state.timer_running = False
                 st.rerun()
-        
+
         with timer_col3:
             if st.button("Reset", key="reset_timer"):
                 st.session_state.timer_running = False
                 st.session_state.timer_elapsed = 0
                 st.rerun()
-        
+
         # Display timer
         if st.session_state.timer_running:
             st.session_state.timer_elapsed = time.time() - st.session_state.timer_start
-            
+
             # Handle countdown timers
             if selected_preset != "Stopwatch":
                 remaining = preset_options[selected_preset] - st.session_state.timer_elapsed
@@ -481,84 +497,84 @@ def workout_page():
                 st.rerun()
         else:
             if selected_preset != "Stopwatch" and st.session_state.timer_elapsed == 0:
-                st.markdown(f'<div class="timer-display">{format_time(preset_options[selected_preset])}</div>', 
+                st.markdown(f'<div class="timer-display">{format_time(preset_options[selected_preset])}</div>',
                           unsafe_allow_html=True)
             else:
                 display_time = st.session_state.timer_elapsed
                 if selected_preset != "Stopwatch":
                     display_time = max(0, preset_options[selected_preset] - st.session_state.timer_elapsed)
                 st.markdown(f'<div class="timer-display">{format_time(display_time)}</div>', unsafe_allow_html=True)
-    
+
     with col2:
         st.subheader("Workout Timer")
-        
+
         timer_col1, timer_col2, timer_col3 = st.columns(3)
         with timer_col1:
             if st.button("Start", key="start_workout_timer", disabled=st.session_state.workout_timer_running):
                 st.session_state.workout_timer_running = True
                 st.session_state.workout_timer_start = time.time() - st.session_state.workout_timer_elapsed
                 st.rerun()
-        
+
         with timer_col2:
             if st.button("Pause", key="pause_workout_timer", disabled=not st.session_state.workout_timer_running):
                 st.session_state.workout_timer_running = False
                 st.rerun()
-        
+
         with timer_col3:
             if st.button("Reset", key="reset_workout_timer"):
                 st.session_state.workout_timer_running = False
                 st.session_state.workout_timer_elapsed = 0
                 st.rerun()
-        
+
         # Display workout timer
         if st.session_state.workout_timer_running:
             st.session_state.workout_timer_elapsed = time.time() - st.session_state.workout_timer_start
-            st.markdown(f'<div class="timer-display">{format_time(st.session_state.workout_timer_elapsed)}</div>', 
+            st.markdown(f'<div class="timer-display">{format_time(st.session_state.workout_timer_elapsed)}</div>',
                        unsafe_allow_html=True)
             time.sleep(0.1)
             st.rerun()
         else:
-            st.markdown(f'<div class="timer-display">{format_time(st.session_state.workout_timer_elapsed)}</div>', 
+            st.markdown(f'<div class="timer-display">{format_time(st.session_state.workout_timer_elapsed)}</div>',
                        unsafe_allow_html=True)
-    
+
     st.divider()
-    
+
     # Workout selection
     selected_day = st.selectbox(
         "Select Workout Day",
         ["dayA", "dayB", "dayC"],
-        format_func=lambda x: {"dayA": "Day A - Full Body Focus", 
-                               "dayB": "Day B - Strength Focus", 
+        format_func=lambda x: {"dayA": "Day A - Full Body Focus",
+                               "dayB": "Day B - Strength Focus",
                                "dayC": "Day C - Mobility Focus"}[x]
     )
-    
+
     # Get workouts and completion status
     workouts = get_workouts(selected_day)
     completion = get_completion_status(selected_day)
-    
+
     # Progress bar
     completed_count = sum(1 for i in range(len(workouts)) if completion.get(i, False))
     progress = completed_count / len(workouts) if len(workouts) > 0 else 0
-    
+
     st.progress(progress)
     st.write(f"**{int(progress * 100)}% Complete** ({completed_count}/{len(workouts)})")
-    
+
     # Exercise list
     for idx, row in workouts.iterrows():
         is_completed = completion.get(idx, False)
-        
+
         with st.container():
             st.markdown(
                 f'<div class="workout-card {"completed-card" if is_completed else ""}">',
                 unsafe_allow_html=True
             )
-            
+
             col1, col2 = st.columns([3, 1])
             with col1:
                 st.markdown(f"### {row['exercise_name']}")
                 st.write(f"**{row['sets']} x {row['reps']}**")
                 st.write(f"_{row['notes']}_")
-            
+
             with col2:
                 if st.button(
                     "Completed" if is_completed else "Mark Complete",
@@ -567,20 +583,20 @@ def workout_page():
                 ):
                     toggle_exercise_completion(selected_day, idx, not is_completed)
                     st.rerun()
-                
+
                 if st.button("Reset", key=f"reset_{selected_day}_{idx}"):
                     toggle_exercise_completion(selected_day, idx, False)
                     st.rerun()
-            
+
             st.markdown('</div>', unsafe_allow_html=True)
-    
+
     # Celebration section
     if progress == 1:
         st.success("Workout Complete! Excellent work!")
         if st.button("Log Workout & Reset", type="primary"):
             # Log the workout
             log_workout(selected_day, len(workouts), format_time(st.session_state.workout_timer_elapsed))
-            
+
             # Reset completion for this day
             conn = sqlite3.connect('fittrack.db')
             c = conn.cursor()
@@ -588,19 +604,19 @@ def workout_page():
             c.execute("DELETE FROM exercise_completion WHERE day = ? AND date = ?", (selected_day, today))
             conn.commit()
             conn.close()
-            
+
             # Reset workout timer
             st.session_state.workout_timer_elapsed = 0
             st.session_state.workout_timer_running = False
-            
+
             st.rerun()
 
 def browse_replace_page():
     st.header("Browse & Replace Exercises")
-    
+
     # Get current workout exercises for replacement
     col1, col2 = st.columns([2, 1])
-    
+
     with col1:
         selected_day = st.selectbox(
             "Select Day for Replacement",
@@ -608,7 +624,7 @@ def browse_replace_page():
             format_func=lambda x: {"dayA": "Day A", "dayB": "Day B", "dayC": "Day C"}[x],
             key="browse_day"
         )
-    
+
     with col2:
         workouts = get_workouts(selected_day)
         exercise_to_replace = st.selectbox(
@@ -616,52 +632,52 @@ def browse_replace_page():
             options=[(row['id'], row['exercise_name']) for _, row in workouts.iterrows()],
             format_func=lambda x: x[1]
         )
-    
+
     st.divider()
-    
+
     # Filters
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
         body_parts = ["All"] + sorted(exercise_db['BodyPart'].dropna().unique().tolist())
         selected_body_part = st.selectbox("Body Part", body_parts)
-    
+
     with col2:
         equipment = ["All"] + sorted(exercise_db['Equipment'].dropna().unique().tolist())
         selected_equipment = st.selectbox("Equipment", equipment)
-    
+
     with col3:
         search_term = st.text_input("Search exercises...")
-    
+
     # Filter the database
     filtered_df = exercise_db.copy()
-    
+
     if selected_body_part != "All":
         filtered_df = filtered_df[filtered_df['BodyPart'] == selected_body_part]
-    
+
     if selected_equipment != "All":
         filtered_df = filtered_df[filtered_df['Equipment'] == selected_equipment]
-    
+
     if search_term:
         filtered_df = filtered_df[filtered_df['Title'].str.contains(search_term, case=False, na=False)]
-    
+
     # Display exercises
     st.write(f"Found {len(filtered_df)} exercises")
-    
+
     # Create a scrollable container
     with st.container():
         for _, exercise in filtered_df.head(50).iterrows():  # Limit to 50 for performance
             with st.container():
                 st.markdown('<div class="exercise-db-card">', unsafe_allow_html=True)
-                
+
                 col1, col2 = st.columns([3, 1])
-                
+
                 with col1:
                     st.markdown(f"**{exercise.get('Title', 'Unknown Exercise')}**")
                     st.write(f"Body Part: {exercise.get('BodyPart', 'N/A')} | "
                             f"Equipment: {exercise.get('Equipment', 'N/A')} | "
                             f"Level: {exercise.get('Level', 'N/A')}")
-                
+
                 with col2:
                     if st.button("Replace", key=f"replace_{exercise.name}"):
                         if exercise_to_replace:
@@ -669,71 +685,108 @@ def browse_replace_page():
                             replace_exercise(exercise_to_replace[0], exercise.get('Title', ''), notes)
                             st.success(f"Replaced '{exercise_to_replace[1]}' with '{exercise.get('Title', '')}'")
                             st.rerun()
-                
+
                 st.markdown('</div>', unsafe_allow_html=True)
 
 def edit_page():
     st.header("Edit Workouts")
-    
+
     selected_day = st.selectbox(
         "Select Day to Edit",
         ["dayA", "dayB", "dayC"],
         format_func=lambda x: {"dayA": "Day A", "dayB": "Day B", "dayC": "Day C"}[x]
     )
-    
+
     workouts = get_workouts(selected_day)
-    
-    # Display current exercises
-    st.subheader("Current Exercises")
-    
+
+    # Display current exercises for reordering and deletion
+    st.subheader("Current Exercises (Drag & Drop Coming Soon!)")
+
     for idx, row in workouts.iterrows():
         with st.container():
             col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-            
+
             with col1:
-                st.write(f"**{row['exercise_name']}**")
+                st.write(f"**{row['exercise_order'] + 1}. {row['exercise_name']}**")
                 st.write(f"{row['sets']} sets x {row['reps']} - {row['notes']}")
-            
+
             with col2:
-                if idx > 0 and st.button("Up", key=f"up_{row['id']}"):
-                    update_exercise_order(selected_day, row['id'], idx - 1)
-                    st.rerun()
-            
+                # Up button
+                if row['exercise_order'] > 0:
+                    if st.button("Up", key=f"up_{row['id']}"):
+                        update_exercise_order(selected_day, row['id'], row['exercise_order'] - 1)
+                        st.rerun()
+
             with col3:
-                if idx < len(workouts) - 1 and st.button("Down", key=f"down_{row['id']}"):
-                    update_exercise_order(selected_day, row['id'], idx + 1)
-                    st.rerun()
-            
+                # Down button
+                if row['exercise_order'] < len(workouts) - 1:
+                    if st.button("Down", key=f"down_{row['id']}"):
+                        update_exercise_order(selected_day, row['id'], row['exercise_order'] + 1)
+                        st.rerun()
+
             with col4:
+                # Delete button
                 if st.button("Delete", key=f"delete_{row['id']}"):
                     delete_exercise(row['id'])
                     st.rerun()
-    
+            st.divider()
+
+
     # Add new exercise
     st.subheader("Add New Exercise")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        new_name = st.text_input("Exercise Name")
-        new_notes = st.text_input("Notes", value="Focus on proper form")
-    
-    with col2:
-        new_sets = st.number_input("Sets", min_value=1, max_value=10, value=3)
-        new_reps = st.text_input("Reps", value="10-12")
-    
-    if st.button("Add Exercise", type="primary"):
-        if new_name:
-            add_exercise(selected_day, new_name, new_sets, new_reps, new_notes)
-            st.success(f"Added {new_name} to {selected_day}")
-            st.rerun()
+
+    with st.form("add_exercise_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            new_name = st.text_input("Exercise Name")
+            new_notes = st.text_input("Notes", value="Focus on proper form")
+        with col2:
+            new_sets = st.number_input("Sets", min_value=1, max_value=10, value=3)
+            new_reps = st.text_input("Reps", value="10-12")
+
+        submitted = st.form_submit_button("Add Exercise")
+        if submitted:
+            if new_name:
+                add_exercise(selected_day, new_name, new_sets, new_reps, new_notes)
+                st.success(f"Added {new_name} to {selected_day}")
+                st.rerun()
+
+
+    # Replace exercise manually
+    st.subheader("Replace Exercise Manually")
+
+    with st.form("replace_exercise_form"):
+        exercise_to_replace_id = st.selectbox(
+            "Exercise to Replace",
+            options=[(row['id'], f"{row['exercise_order'] + 1}. {row['exercise_name']}") for _, row in workouts.iterrows()],
+            format_func=lambda x: x[1]
+        )[0]
+
+        st.write("Enter new exercise details:")
+        col1, col2 = st.columns(2)
+        with col1:
+            replace_name = st.text_input("New Exercise Name")
+            replace_notes = st.text_input("New Notes")
+        with col2:
+            replace_sets = st.number_input("New Sets", min_value=1, max_value=10, value=3)
+            replace_reps = st.text_input("New Reps", value="10-12")
+
+        replace_submitted = st.form_submit_button("Replace Exercise")
+        if replace_submitted:
+            if replace_name:
+                replace_exercise_manually(exercise_to_replace_id, replace_name, replace_sets, replace_reps, replace_notes)
+                st.success(f"Exercise replaced successfully in {selected_day}")
+                st.rerun()
+            else:
+                st.error("New exercise name cannot be empty.")
 
 def calendar_page():
     st.header("Workout Calendar")
-    
+
     # Get workout history
     history = get_workout_history(limit=365) # Fetch more history for calendar
     workout_dates = set(history['date'].tolist()) if not history.empty else set()
-    
+
     # --- Accurate Month Navigation ---
     today = datetime.now()
     if 'display_month' not in st.session_state:
@@ -742,7 +795,7 @@ def calendar_page():
         st.session_state.display_year = today.year
 
     col1, col2, col3 = st.columns([1, 2, 1])
-    
+
     with col1:
         if st.button("Previous"):
             st.session_state.display_month -= 1
@@ -750,7 +803,7 @@ def calendar_page():
                 st.session_state.display_month = 12
                 st.session_state.display_year -= 1
             st.rerun()
-    
+
     with col3:
         if st.button("Next"):
             st.session_state.display_month += 1
@@ -758,23 +811,23 @@ def calendar_page():
                 st.session_state.display_month = 1
                 st.session_state.display_year += 1
             st.rerun()
-    
+
     display_year = st.session_state.display_year
     display_month = st.session_state.display_month
     display_date_obj = datetime(display_year, display_month, 1)
-    
+
     with col2:
         st.markdown(f"<h2 style='text-align: center'>{display_date_obj.strftime('%B %Y')}</h2>", unsafe_allow_html=True)
-    
+
     # Create calendar
     cal = calendar.monthcalendar(display_year, display_month)
-    
+
     # Day headers
     days_header = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
     cols = st.columns(7)
     for i, day_name in enumerate(days_header):
         cols[i].markdown(f"<div style='text-align: center; font-weight: bold;'>{day_name}</div>", unsafe_allow_html=True)
-    
+
     # Calendar days
     for week in cal:
         cols = st.columns(7)
@@ -785,47 +838,47 @@ def calendar_page():
                 date_str = f"{display_year:04d}-{display_month:02d}-{day:02d}"
                 is_today = (display_year == today.year and display_month == today.month and day == today.day)
                 is_workout = date_str in workout_dates
-                
+
                 style_class = "calendar-day"
                 if is_today:
                     style_class += " today"
                 elif is_workout:
                     style_class += " workout-day"
-                
+
                 cols[i].markdown(f'<div class="{style_class}">{day}</div>', unsafe_allow_html=True)
 
 def progress_page():
     st.header("Your Progress")
-    
+
     # Get stats
     total, this_week, streak = get_stats()
-    
+
     # Display stats
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
         st.markdown('<div class="stat-card">', unsafe_allow_html=True)
         st.markdown(f'<div class="stat-value">{total}</div>', unsafe_allow_html=True)
         st.markdown('<div class="stat-label">Total Workouts</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
-    
+
     with col2:
         st.markdown('<div class="stat-card">', unsafe_allow_html=True)
         st.markdown(f'<div class="stat-value">{this_week}</div>', unsafe_allow_html=True)
         st.markdown('<div class="stat-label">This Week</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
-    
+
     with col3:
         st.markdown('<div class="stat-card">', unsafe_allow_html=True)
         st.markdown(f'<div class="stat-value">{streak}</div>', unsafe_allow_html=True)
         st.markdown('<div class="stat-label">Day Streak</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
-    
+
     # Workout history
     st.subheader("Recent Workout History")
-    
+
     history = get_workout_history(limit=20)
-    
+
     if not history.empty:
         for _, workout in history.iterrows():
             day_name = {"dayA": "Day A", "dayB": "Day B", "dayC": "Day C"}.get(workout['day'], workout['day'])
@@ -834,13 +887,13 @@ def progress_page():
             st.divider()
     else:
         st.info("No workout history yet. Complete your first workout to see it here!")
-    
+
     # Export data option
     if st.button("Export Workout Data"):
         conn = sqlite3.connect('fittrack.db')
         all_history = pd.read_sql_query("SELECT * FROM workout_history ORDER BY timestamp DESC", conn)
         conn.close()
-        
+
         csv = all_history.to_csv(index=False)
         st.download_button(
             label="Download CSV",
@@ -851,39 +904,39 @@ def progress_page():
 
 def guide_page():
     st.header("Workout Guide")
-    
+
     st.markdown("""
     ### Program Overview
     This 3-day full-body program focuses on functional strength training with emphasis on proper form and progressive overload.
-    
+
     #### Day A - Full Body Focus
     - Compound movements for overall strength
     - Balanced push/pull exercises
     - Core stability work
-    
+
     #### Day B - Strength Focus
     - Higher intensity strength training
     - Unilateral movements for balance
     - Targeted muscle group work
-    
+
     #### Day C - Mobility Focus
     - Movement quality and flexibility
     - Active recovery exercises
     - Corrective movement patterns
-    
+
     ### General Guidelines
     - Focus on proper form over weight
     - Rest 45-60 seconds between sets
     - Progress gradually week to week
     - Listen to your body and adjust as needed
-    
+
     ### Features of FitTrack Pro
     - **Persistent Storage**: All your workouts, completions, and history are saved in a SQLite database
     - **Exercise Database**: Access to thousands of exercises (when megaGymDataset.csv is loaded)
     - **Smart Replacements**: Easily swap exercises while maintaining your workout structure
     - **Progress Tracking**: Monitor your consistency with detailed statistics
     - **Flexible Editing**: Add, remove, or reorder exercises as needed
-    
+
     ### Tips for Success
     1. **Consistency is key** - Aim for 3 workouts per week
     2. **Track your progress** - Use the calendar to monitor consistency
