@@ -7,6 +7,16 @@ from pathlib import Path
 import time
 import calendar
 
+# Audio libraries
+try:
+    import beepy
+    BEEPY_AVAILABLE = True
+except ImportError:
+    BEEPY_AVAILABLE = False
+    st.warning("Beepy library not installed. Install with: pip install beepy")
+
+import sys
+
 # Database setup
 def init_database():
     """Initialize SQLite database with tables"""
@@ -449,6 +459,100 @@ st.markdown("""
         background-color: #d4edda;
     }
 </style>
+
+<script>
+// Simple beep functions using oscillator
+let audioContext;
+
+function initAudio() {
+    if (!audioContext) {
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            console.log('Audio context initialized');
+        } catch (e) {
+            console.log('Audio context not supported:', e);
+            return false;
+        }
+    }
+    return true;
+}
+
+function playBeep(frequency = 800, duration = 200, volume = 0.3) {
+    console.log(`Playing beep: ${frequency}Hz, ${duration}ms`);
+    if (!initAudio()) {
+        console.log('Audio init failed, trying fallback');
+        // Fallback to HTML5 audio
+        playFallbackBeep();
+        return;
+    }
+    
+    try {
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+        oscillator.type = 'sine';
+        
+        gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+        gainNode.gain.linearRampToValueAtTime(volume, audioContext.currentTime + 0.01);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration / 1000);
+        
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + duration / 1000);
+        console.log('Beep played successfully');
+    } catch (e) {
+        console.log('Beep failed:', e);
+        playFallbackBeep();
+    }
+}
+
+function playFallbackBeep() {
+    // Try using HTML5 audio as fallback
+    try {
+        const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmMbCDOH0fPMeysFJHTD8N+VRgwQWK7m77JjGgg2jdXzzn0vBSdt1Ogz');
+        audio.play().catch(e => console.log('Fallback audio failed:', e));
+    } catch (e) {
+        console.log('All audio methods failed:', e);
+    }
+}
+
+// Beep functions
+window.countdownBeep = () => {
+    console.log('Countdown beep triggered');
+    playBeep(600, 150, 0.2);
+};
+window.transitionBeep = () => {
+    console.log('Transition beep triggered');
+    playBeep(800, 500, 0.3);
+};
+window.timerBeep = () => {
+    console.log('Timer beep triggered');
+    playBeep(700, 400, 0.3);
+};
+window.completionBeep = () => {
+    console.log('Completion beep triggered');
+    playBeep(1000, 300, 0.3);
+    setTimeout(() => playBeep(1200, 300, 0.3), 350);
+    setTimeout(() => playBeep(1400, 600, 0.4), 700);
+};
+
+// Initialize on user interaction
+document.addEventListener('click', () => {
+    console.log('User clicked, initializing audio');
+    initAudio();
+}, { once: true });
+
+document.addEventListener('keydown', () => {
+    console.log('User pressed key, initializing audio');
+    initAudio();
+}, { once: true });
+
+console.log('Audio script loaded');
+</script>
+
 """, unsafe_allow_html=True)
 
 # Initialize database
@@ -489,6 +593,7 @@ if 'timer_running' not in st.session_state:
     st.session_state.timer_start = None
     st.session_state.timer_elapsed = 0
     st.session_state.timer_preset = "Stopwatch"
+    st.session_state.timer_last_beep_second = -1
 
 if 'workout_timer_running' not in st.session_state:
     st.session_state.workout_timer_running = False
@@ -504,12 +609,68 @@ if 'interval_timer_running' not in st.session_state:
     st.session_state.current_phase = "WORK"  # "WORK" or "REST"
     st.session_state.current_exercise_index = 0
     st.session_state.interval_completed = False
+    st.session_state.last_beep_second = -1
 
 def format_time(seconds):
     """Format seconds to MM:SS"""
     minutes = int(seconds // 60)
     secs = int(seconds % 60)
     return f"{minutes:02d}:{secs:02d}"
+
+# Audio functions
+def play_countdown_beep():
+    """Play countdown beep (short)"""
+    try:
+        if BEEPY_AVAILABLE:
+            beepy.beep(sound=1)  # Default beep
+        else:
+            # Fallback to ASCII bell
+            print('\a', end='', flush=True)
+            sys.stdout.flush()
+    except Exception as e:
+        print(f"Audio error: {e}")
+
+def play_transition_beep():
+    """Play transition beep (longer)"""
+    try:
+        if BEEPY_AVAILABLE:
+            beepy.beep(sound=2)  # Coin sound
+        else:
+            # Multiple ASCII bells for longer sound
+            print('\a\a', end='', flush=True)
+            sys.stdout.flush()
+    except Exception as e:
+        print(f"Audio error: {e}")
+
+def play_timer_beep():
+    """Play timer completion beep"""
+    try:
+        if BEEPY_AVAILABLE:
+            beepy.beep(sound=3)  # Ping sound
+        else:
+            print('\a\a\a', end='', flush=True)
+            sys.stdout.flush()
+    except Exception as e:
+        print(f"Audio error: {e}")
+
+def play_completion_beep():
+    """Play workout completion beep (multiple beeps)"""
+    try:
+        if BEEPY_AVAILABLE:
+            beepy.beep(sound=4)  # Success sound
+            time.sleep(0.3)
+            beepy.beep(sound=4)
+            time.sleep(0.3)
+            beepy.beep(sound=4)
+        else:
+            # Multiple ASCII bells with timing
+            for i in range(3):
+                print('\a\a', end='', flush=True)
+                sys.stdout.flush()
+                if i < 2:  # Don't sleep after last beep
+                    time.sleep(0.3)
+    except Exception as e:
+        print(f"Audio error: {e}")
 
 # Main App
 def main():
@@ -572,6 +733,37 @@ def cardio_core_page():
     
     st.divider()
     
+    # Audio test section
+    st.subheader("🔊 Audio Test")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        if st.button("Test Countdown Beep"):
+            play_countdown_beep()
+            st.success("Countdown beep played!")
+    
+    with col2:
+        if st.button("Test Transition Beep"):
+            play_transition_beep()
+            st.success("Transition beep played!")
+    
+    with col3:
+        if st.button("Test Timer Beep"):
+            play_timer_beep()
+            st.success("Timer beep played!")
+    
+    with col4:
+        if st.button("Test Completion Beep"):
+            play_completion_beep()
+            st.success("Completion beep played!")
+    
+    if BEEPY_AVAILABLE:
+        st.info("🎵 Using Beepy library for audio")
+    else:
+        st.info("🔔 Using ASCII bell character (\\a) for audio - install beepy for better sounds: `pip install beepy`")
+    
+    st.divider()
+    
     # Core interval timer section
     st.subheader("Part 2: Core Interval Training (5 minutes)")
     st.markdown("**4 sets × 1 minute work + 10 seconds rest**")
@@ -594,6 +786,7 @@ def cardio_core_page():
             st.session_state.current_phase = "WORK"
             st.session_state.current_exercise_index = 0
             st.session_state.interval_completed = False
+            st.session_state.last_beep_second = -1  # Reset beep tracking
             st.rerun()
     
     with col2:
@@ -609,6 +802,7 @@ def cardio_core_page():
             st.session_state.current_phase = "WORK"
             st.session_state.current_exercise_index = 0
             st.session_state.interval_completed = False
+            st.session_state.last_beep_second = -1  # Reset beep tracking
             st.rerun()
     
     # Interval timer logic and display
@@ -690,8 +884,29 @@ def cardio_core_page():
             
             # Timer display
             timer_class = "work-timer" if st.session_state.current_phase == "WORK" else "rest-timer"
-            st.markdown(f'<div class="interval-timer-display {timer_class}">{format_time(max(0, remaining))}</div>', 
+            remaining_time = max(0, remaining)
+            st.markdown(f'<div class="interval-timer-display {timer_class}">{format_time(remaining_time)}</div>', 
                        unsafe_allow_html=True)
+            
+            # Audio cues
+            remaining_seconds = int(remaining_time)
+            if 'last_beep_second' not in st.session_state:
+                st.session_state.last_beep_second = -1
+            
+            # Countdown beeps for last 10 seconds
+            if remaining_seconds <= 10 and remaining_seconds > 0 and remaining_seconds != st.session_state.last_beep_second:
+                play_countdown_beep()
+                st.session_state.last_beep_second = remaining_seconds
+            
+            # Transition beep when interval ends
+            if remaining_seconds == 0 and st.session_state.last_beep_second != 0:
+                if st.session_state.current_set == 4 and st.session_state.current_phase == "WORK":
+                    # Workout completion beep
+                    play_completion_beep()
+                else:
+                    # Regular transition beep
+                    play_transition_beep()
+                st.session_state.last_beep_second = 0
             
             # Auto refresh
             time.sleep(0.1)
@@ -830,6 +1045,7 @@ def workout_page():
             st.session_state.timer_preset = selected_preset
             st.session_state.timer_elapsed = 0
             st.session_state.timer_running = False
+            st.session_state.timer_last_beep_second = -1  # Reset beep tracking
 
         timer_col1, timer_col2, timer_col3 = st.columns(3)
 
@@ -837,6 +1053,7 @@ def workout_page():
             if st.button("Start", key="start_timer", disabled=st.session_state.timer_running):
                 st.session_state.timer_running = True
                 st.session_state.timer_start = time.time() - st.session_state.timer_elapsed
+                st.session_state.timer_last_beep_second = -1  # Reset beep tracking
                 st.rerun()
 
         with timer_col2:
@@ -848,6 +1065,7 @@ def workout_page():
             if st.button("Reset", key="reset_timer"):
                 st.session_state.timer_running = False
                 st.session_state.timer_elapsed = 0
+                st.session_state.timer_last_beep_second = -1  # Reset beep tracking
                 st.rerun()
 
         # Display timer
@@ -860,8 +1078,26 @@ def workout_page():
                 if remaining <= 0:
                     st.session_state.timer_running = False
                     st.markdown('<div class="timer-display">00:00 Complete</div>', unsafe_allow_html=True)
+                    # Completion beep for timer
+                    play_timer_beep()
                 else:
                     st.markdown(f'<div class="timer-display">{format_time(remaining)}</div>', unsafe_allow_html=True)
+                    
+                    # Audio cues for set timer
+                    remaining_seconds = int(remaining)
+                    if 'timer_last_beep_second' not in st.session_state:
+                        st.session_state.timer_last_beep_second = -1
+                    
+                    # Countdown beeps for last 10 seconds
+                    if remaining_seconds <= 10 and remaining_seconds > 0 and remaining_seconds != st.session_state.timer_last_beep_second:
+                        play_countdown_beep()
+                        st.session_state.timer_last_beep_second = remaining_seconds
+                    
+                    # Completion beep when timer ends
+                    if remaining_seconds == 0 and st.session_state.timer_last_beep_second != 0:
+                        play_timer_beep()
+                        st.session_state.timer_last_beep_second = 0
+                    
                     time.sleep(0.1)
                     st.rerun()
             else:
