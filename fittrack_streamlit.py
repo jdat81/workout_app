@@ -768,45 +768,38 @@ def main():
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        # Fixed Apple Music button
+        # Apple Music button - Fixed for iOS
         if st.button("Open Apple Music", key="apple_music_btn"):
             st.components.v1.html("""
+            <iframe src="music://" style="display:none;" onload="console.log('Music app opened')" 
+                    onerror="window.open('https://apps.apple.com/app/apple-music/id1108187390', '_blank')"></iframe>
             <script>
-            // Direct execution without checking if function exists
-            console.log('Apple Music button clicked');
-            
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-            const isMac = navigator.platform.indexOf('Mac') > -1;
-            
-            if (isIOS) {
-                // For iOS - try multiple schemes immediately
+            // Try multiple approaches for iOS
+            setTimeout(function() {
+                // Method 1: Direct location change
                 try {
-                    window.location.href = 'music://';
-                    console.log('Tried music://');
-                } catch (e) {
-                    try {
-                        window.location.href = 'musics://';
-                        console.log('Tried musics://');
-                    } catch (e2) {
-                        try {
-                            window.location.href = 'itms-music://';
-                            console.log('Tried itms-music://');
-                        } catch (e3) {
-                            // Final fallback
-                            window.open('https://apps.apple.com/app/apple-music/id1108187390', '_blank');
-                            console.log('Opened App Store');
-                        }
+                    if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+                        // Create invisible link and click it
+                        var link = document.createElement('a');
+                        link.href = 'music://';
+                        link.style.display = 'none';
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        
+                        // Fallback after 2 seconds
+                        setTimeout(function() {
+                            if (document.hasFocus()) {
+                                window.open('https://apps.apple.com/app/apple-music/id1108187390', '_blank');
+                            }
+                        }, 2000);
+                    } else {
+                        window.open('https://music.apple.com', '_blank');
                     }
-                }
-            } else if (isMac) {
-                try {
-                    window.location.href = 'music://';
                 } catch (e) {
                     window.open('https://music.apple.com', '_blank');
                 }
-            } else {
-                window.open('https://music.apple.com', '_blank');
-            }
+            }, 100);
             </script>
             """, height=0)
             st.success("Attempting to open Apple Music...")
@@ -1493,6 +1486,86 @@ def edit_page():
                     st.rerun()
             st.divider()
 
+    st.divider()
+
+    # NEW: Replace exercises using database
+    st.subheader("Replace Exercise from Database")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col2:
+        # Select exercise to replace
+        if not workouts.empty:
+            exercise_to_replace = st.selectbox(
+                "Exercise to Replace",
+                options=[(row['id'], f"{row['exercise_order'] + 1}. {row['exercise_name']}") for _, row in workouts.iterrows()],
+                format_func=lambda x: x[1],
+                key="edit_exercise_to_replace"
+            )
+        else:
+            st.info("No exercises to replace")
+            exercise_to_replace = None
+    
+    with col1:
+        if exercise_to_replace:
+            st.info(f"**Replacing:** {exercise_to_replace[1]}")
+
+    # Exercise database filters
+    if exercise_to_replace:
+        st.write("**Browse Exercise Database:**")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            body_parts = ["All"] + sorted(exercise_db['BodyPart'].dropna().unique().tolist())
+            selected_body_part = st.selectbox("Body Part", body_parts, key="edit_body_part")
+        
+        with col2:
+            equipment = ["All"] + sorted(exercise_db['Equipment'].dropna().unique().tolist())
+            selected_equipment = st.selectbox("Equipment", equipment, key="edit_equipment")
+        
+        with col3:
+            search_term = st.text_input("Search exercises...", key="edit_search")
+        
+        # Filter the database
+        filtered_df = exercise_db.copy()
+        
+        if selected_body_part != "All":
+            filtered_df = filtered_df[filtered_df['BodyPart'] == selected_body_part]
+        
+        if selected_equipment != "All":
+            filtered_df = filtered_df[filtered_df['Equipment'] == selected_equipment]
+        
+        if search_term:
+            filtered_df = filtered_df[filtered_df['Title'].str.contains(search_term, case=False, na=False)]
+        
+        # Display exercises from database
+        st.write(f"Found {len(filtered_df)} exercises")
+        
+        with st.container():
+            for _, exercise in filtered_df.head(15).iterrows():
+                with st.container():
+                    st.markdown('<div class="exercise-db-card">', unsafe_allow_html=True)
+                    
+                    col1, col2 = st.columns([3, 1])
+                    
+                    with col1:
+                        st.markdown(f"**{exercise.get('Title', 'Unknown Exercise')}**")
+                        st.write(f"Body Part: {exercise.get('BodyPart', 'N/A')} | "
+                                f"Equipment: {exercise.get('Equipment', 'N/A')} | "
+                                f"Level: {exercise.get('Level', 'N/A')}")
+                    
+                    with col2:
+                        if st.button("Replace", key=f"edit_replace_{exercise.name}"):
+                            notes = f"{exercise.get('Type', 'Exercise')} - {exercise.get('Level', 'All levels')}"
+                            replace_exercise(exercise_to_replace[0], exercise.get('Title', ''), notes)
+                            st.success(f"Replaced '{exercise_to_replace[1].split('. ', 1)[1]}' with '{exercise.get('Title', '')}'")
+                            st.rerun()
+                    
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.divider()
+
     # Add new exercise
     st.subheader("Add New Exercise")
 
@@ -1512,14 +1585,17 @@ def edit_page():
                 st.success(f"Added {new_name} to {selected_day}")
                 st.rerun()
 
+    st.divider()
+
     # Replace exercise manually
     st.subheader("Replace Exercise Manually")
 
     with st.form("replace_exercise_form"):
-        exercise_to_replace_id = st.selectbox(
+        exercise_to_replace_manual = st.selectbox(
             "Exercise to Replace",
             options=[(row['id'], f"{row['exercise_order'] + 1}. {row['exercise_name']}") for _, row in workouts.iterrows()],
-            format_func=lambda x: x[1]
+            format_func=lambda x: x[1],
+            key="manual_replace_select"
         )[0]
 
         st.write("Enter new exercise details:")
@@ -1534,7 +1610,7 @@ def edit_page():
         replace_submitted = st.form_submit_button("Replace Exercise")
         if replace_submitted:
             if replace_name:
-                replace_exercise_manually(exercise_to_replace_id, replace_name, replace_sets, replace_reps, replace_notes)
+                replace_exercise_manually(exercise_to_replace_manual, replace_name, replace_sets, replace_reps, replace_notes)
                 st.success(f"Exercise replaced successfully in {selected_day}")
                 st.rerun()
             else:
