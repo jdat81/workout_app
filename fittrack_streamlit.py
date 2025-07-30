@@ -608,23 +608,44 @@ class SimpleAudioSystem {
     }
 }
 
-// Apple Music Integration - Actually works
+// Apple Music Integration - Fixed to actually work
 function openAppleMusic() {
     console.log('Opening Apple Music...');
     
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     const isMac = navigator.platform.indexOf('Mac') > -1;
     
-    if (isIOS || isMac) {
-        // Try to open native Apple Music app
-        window.location.href = 'music://';
+    if (isIOS) {
+        // For iOS - try multiple URL schemes
+        const schemes = ['music://', 'musics://', 'itms-music://', 'apple-music://'];
         
-        // Fallback to web version after 2 seconds
+        // Try each scheme
+        let attempted = false;
+        schemes.forEach((scheme, index) => {
+            setTimeout(() => {
+                try {
+                    window.location.href = scheme;
+                    console.log(`Tried scheme: ${scheme}`);
+                } catch (e) {
+                    console.log(`Scheme ${scheme} failed:`, e);
+                }
+            }, index * 500);
+        });
+        
+        // Fallback to App Store or web after 3 seconds
         setTimeout(() => {
+            window.open('https://apps.apple.com/app/apple-music/id1108187390', '_blank');
+        }, 3000);
+        
+    } else if (isMac) {
+        // For Mac - try to open Music app
+        try {
+            window.location.href = 'music://';
+        } catch (e) {
             window.open('https://music.apple.com', '_blank');
-        }, 2000);
+        }
     } else {
-        // Open web version directly for other platforms
+        // Other platforms - open web version
         window.open('https://music.apple.com', '_blank');
     }
 }
@@ -751,14 +772,44 @@ def main():
         if st.button("Open Apple Music", key="apple_music_btn"):
             st.components.v1.html("""
             <script>
-            if (window.openAppleMusic) {
-                window.openAppleMusic();
+            // Direct execution without checking if function exists
+            console.log('Apple Music button clicked');
+            
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+            const isMac = navigator.platform.indexOf('Mac') > -1;
+            
+            if (isIOS) {
+                // For iOS - try multiple schemes immediately
+                try {
+                    window.location.href = 'music://';
+                    console.log('Tried music://');
+                } catch (e) {
+                    try {
+                        window.location.href = 'musics://';
+                        console.log('Tried musics://');
+                    } catch (e2) {
+                        try {
+                            window.location.href = 'itms-music://';
+                            console.log('Tried itms-music://');
+                        } catch (e3) {
+                            // Final fallback
+                            window.open('https://apps.apple.com/app/apple-music/id1108187390', '_blank');
+                            console.log('Opened App Store');
+                        }
+                    }
+                }
+            } else if (isMac) {
+                try {
+                    window.location.href = 'music://';
+                } catch (e) {
+                    window.open('https://music.apple.com', '_blank');
+                }
             } else {
-                console.log('Apple Music function not available');
+                window.open('https://music.apple.com', '_blank');
             }
             </script>
             """, height=0)
-            st.success("Opening Apple Music...")
+            st.success("Attempting to open Apple Music...")
     
     with col2:
         if st.button("Enable Notifications"):
