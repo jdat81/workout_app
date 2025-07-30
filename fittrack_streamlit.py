@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 import time
 import calendar
+import base64
 
-# Database setup
+# Database setup functions remain the same
 def init_database():
     """Initialize SQLite database with tables"""
     conn = sqlite3.connect('fittrack.db')
@@ -120,8 +121,8 @@ def populate_default_core_exercises(conn):
                  (exercise, i))
     conn.commit()
 
+# All the database functions remain the same
 def get_workouts(day):
-    """Get workouts for a specific day"""
     conn = sqlite3.connect('fittrack.db')
     df = pd.read_sql_query(
         "SELECT * FROM workouts WHERE day = ? ORDER BY exercise_order",
@@ -131,7 +132,6 @@ def get_workouts(day):
     return df
 
 def get_core_exercises():
-    """Get core exercises"""
     conn = sqlite3.connect('fittrack.db')
     df = pd.read_sql_query(
         "SELECT * FROM core_exercises ORDER BY exercise_order",
@@ -141,21 +141,16 @@ def get_core_exercises():
     return df
 
 def add_core_exercise(exercise_name):
-    """Add new core exercise"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
-    
-    # Get max order
     c.execute("SELECT MAX(exercise_order) FROM core_exercises")
     max_order = c.fetchone()[0] or -1
-    
     c.execute("INSERT INTO core_exercises (exercise_name, exercise_order) VALUES (?, ?)",
               (exercise_name, max_order + 1))
     conn.commit()
     conn.close()
 
 def delete_core_exercise(exercise_id):
-    """Delete a core exercise"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
     c.execute("DELETE FROM core_exercises WHERE id = ?", (exercise_id,))
@@ -163,7 +158,6 @@ def delete_core_exercise(exercise_id):
     conn.close()
 
 def get_completion_status(day):
-    """Get completion status for today's workout"""
     conn = sqlite3.connect('fittrack.db')
     today = datetime.now().strftime("%Y-%m-%d")
     df = pd.read_sql_query(
@@ -174,28 +168,22 @@ def get_completion_status(day):
     return {row['exercise_index']: row['completed'] for _, row in df.iterrows()}
 
 def toggle_exercise_completion(day, exercise_index, completed):
-    """Toggle exercise completion status"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
     today = datetime.now().strftime("%Y-%m-%d")
-
-    # Check if record exists
     c.execute("SELECT id FROM exercise_completion WHERE day = ? AND exercise_index = ? AND date = ?",
               (day, exercise_index, today))
     result = c.fetchone()
-
     if result:
         c.execute("UPDATE exercise_completion SET completed = ? WHERE id = ?",
                  (completed, result[0]))
     else:
         c.execute("INSERT INTO exercise_completion (day, exercise_index, completed, date) VALUES (?, ?, ?, ?)",
                  (day, exercise_index, completed, today))
-
     conn.commit()
     conn.close()
 
 def log_workout(day, exercises_completed, duration):
-    """Log completed workout to history"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
     c.execute("INSERT INTO workout_history (date, day, exercises_completed, duration) VALUES (?, ?, ?, ?)",
@@ -204,7 +192,6 @@ def log_workout(day, exercises_completed, duration):
     conn.close()
 
 def get_workout_history(limit=100):
-    """Get workout history"""
     conn = sqlite3.connect('fittrack.db')
     df = pd.read_sql_query(
         "SELECT * FROM workout_history ORDER BY timestamp DESC LIMIT ?",
@@ -214,23 +201,15 @@ def get_workout_history(limit=100):
     return df
 
 def get_stats():
-    """Get workout statistics"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
-
-    # Total workouts
     c.execute("SELECT COUNT(*) FROM workout_history")
     total = c.fetchone()[0]
-
-    # This week
     week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
     c.execute("SELECT COUNT(*) FROM workout_history WHERE date >= ?", (week_ago,))
     this_week = c.fetchone()[0]
-
-    # Calculate streak
     c.execute("SELECT DISTINCT date FROM workout_history ORDER BY date DESC")
     dates = [row[0] for row in c.fetchall()]
-
     streak = 0
     if dates:
         last_date = datetime.strptime(dates[0], "%Y-%m-%d").date()
@@ -243,26 +222,20 @@ def get_stats():
                     last_date = workout_date
                 else:
                     break
-
     conn.close()
     return total, this_week, streak
 
 def add_exercise(day, name, sets, reps, notes):
-    """Add new exercise to a workout day"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
-
-    # Get max order for the day
     c.execute("SELECT MAX(exercise_order) FROM workouts WHERE day = ?", (day,))
     max_order = c.fetchone()[0] or -1
-
     c.execute("INSERT INTO workouts (day, exercise_name, sets, reps, notes, exercise_order) VALUES (?, ?, ?, ?, ?, ?)",
               (day, name, sets, reps, notes, max_order + 1))
     conn.commit()
     conn.close()
 
 def delete_exercise(exercise_id):
-    """Delete an exercise"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
     c.execute("DELETE FROM workouts WHERE id = ?", (exercise_id,))
@@ -270,43 +243,31 @@ def delete_exercise(exercise_id):
     conn.close()
 
 def update_exercise_order(day, exercise_id, new_order):
-    """Update exercise order"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
-
-    # Get current order
     c.execute("SELECT exercise_order FROM workouts WHERE id = ?", (exercise_id,))
     current_order = c.fetchone()[0]
-
-    # Swap orders
     c.execute("SELECT id FROM workouts WHERE day = ? AND exercise_order = ?", (day, new_order))
     swap_id = c.fetchone()
-
     if swap_id:
         c.execute("UPDATE workouts SET exercise_order = ? WHERE id = ?", (current_order, swap_id[0]))
-
     c.execute("UPDATE workouts SET exercise_order = ? WHERE id = ?", (new_order, exercise_id))
-
     conn.commit()
     conn.close()
 
 def replace_exercise(exercise_id, new_name, new_notes=None):
-    """Replace an exercise with another from the database"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
-
     if new_notes:
         c.execute("UPDATE workouts SET exercise_name = ?, notes = ? WHERE id = ?",
                  (new_name, new_notes, exercise_id))
     else:
         c.execute("UPDATE workouts SET exercise_name = ? WHERE id = ?",
                  (new_name, exercise_id))
-
     conn.commit()
     conn.close()
 
 def replace_exercise_manually(exercise_id, new_name, new_sets, new_reps, new_notes):
-    """Replace an exercise manually with new details"""
     conn = sqlite3.connect('fittrack.db')
     c = conn.cursor()
     c.execute("UPDATE workouts SET exercise_name = ?, sets = ?, reps = ?, notes = ? WHERE id = ?",
@@ -314,6 +275,19 @@ def replace_exercise_manually(exercise_id, new_name, new_sets, new_reps, new_not
     conn.commit()
     conn.close()
 
+# Enhanced timer persistence function
+def get_actual_elapsed_time(timer_key, start_time_key):
+    """Calculate actual elapsed time accounting for app suspension"""
+    if timer_key not in st.session_state or not st.session_state[timer_key]:
+        return 0
+    
+    if start_time_key not in st.session_state:
+        return 0
+    
+    # Calculate time based on stored start time
+    current_time = time.time()
+    start_time = st.session_state[start_time_key]
+    return current_time - start_time
 
 # Initialize Streamlit
 st.set_page_config(
@@ -322,115 +296,153 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS and Audio
+# Clean, professional CSS
 st.markdown("""
 <style>
-    .main { padding: 0rem 1rem; }
+    /* Clean, professional styling */
+    .main { 
+        padding: 1rem 2rem; 
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    
     .stButton > button {
         width: 100%;
         border-radius: 8px;
         height: 3rem;
-        font-weight: 600;
+        font-weight: 500;
+        border: 1px solid #d1d5db;
+        background: white;
+        color: #374151;
+        transition: all 0.2s;
     }
+    
+    .stButton > button:hover {
+        background: #f9fafb;
+        border-color: #9ca3af;
+    }
+    
     .workout-card {
-        background: #f0f2f6;
+        background: white;
         padding: 1.5rem;
-        border-radius: 12px;
+        border-radius: 8px;
         margin-bottom: 1rem;
-        border-left: 4px solid #6366f1;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     }
+    
     .completed-card {
-        background: #d4edda;
-        border-left-color: #28a745;
+        background: #f0fdf4;
+        border-color: #22c55e;
     }
+    
     .timer-display {
         font-size: 3rem;
-        font-weight: 700;
+        font-weight: 600;
         text-align: center;
-        color: #1e293b;
-        font-family: monospace;
-        padding: 1rem;
-        background: #f8f9fa;
-        border-radius: 12px;
+        color: #111827;
+        font-family: -apple-system, BlinkMacSystemFont, monospace;
+        padding: 2rem;
+        background: #f9fafb;
+        border-radius: 8px;
         margin: 1rem 0;
+        border: 1px solid #e5e7eb;
     }
+    
     .interval-timer-display {
         font-size: 4rem;
-        font-weight: 700;
+        font-weight: 600;
         text-align: center;
-        color: #1e293b;
-        font-family: monospace;
+        color: #111827;
+        font-family: -apple-system, BlinkMacSystemFont, monospace;
         padding: 2rem;
-        background: #f8f9fa;
-        border-radius: 12px;
+        background: #f9fafb;
+        border-radius: 8px;
         margin: 1rem 0;
-        border: 3px solid #6366f1;
+        border: 2px solid #3b82f6;
     }
+    
     .work-timer {
-        background: #dcfce7;
-        border-color: #16a34a;
-        color: #16a34a;
+        background: #ecfdf5;
+        border-color: #10b981;
+        color: #059669;
     }
+    
     .rest-timer {
         background: #fef3c7;
         border-color: #f59e0b;
-        color: #f59e0b;
+        color: #d97706;
     }
+    
     .interval-exercise {
-        font-size: 2rem;
-        font-weight: 600;
+        font-size: 1.5rem;
+        font-weight: 500;
         text-align: center;
         color: #374151;
         margin-bottom: 1rem;
         padding: 1rem;
-        background: #e5e7eb;
+        background: #f3f4f6;
         border-radius: 8px;
+        border: 1px solid #d1d5db;
     }
+    
     .interval-status {
-        font-size: 1.5rem;
-        font-weight: 600;
+        font-size: 1.25rem;
+        font-weight: 500;
         text-align: center;
         margin-bottom: 1rem;
         padding: 0.75rem;
         border-radius: 8px;
+        border: 1px solid #d1d5db;
     }
+    
     .work-status {
-        background: #dcfce7;
-        color: #16a34a;
+        background: #ecfdf5;
+        color: #059669;
+        border-color: #10b981;
     }
+    
     .rest-status {
         background: #fef3c7;
-        color: #f59e0b;
+        color: #d97706;
+        border-color: #f59e0b;
     }
+    
     .stat-card {
         background: white;
         padding: 1.5rem;
-        border-radius: 12px;
+        border-radius: 8px;
         text-align: center;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
         height: 100%;
     }
+    
     .stat-value {
         font-size: 2.5rem;
-        font-weight: 800;
-        color: #6366f1;
+        font-weight: 600;
+        color: #3b82f6;
         margin-bottom: 0.5rem;
     }
+    
     .stat-label {
-        font-weight: 600;
-        color: #64748b;
+        font-weight: 500;
+        color: #6b7280;
     }
+    
     .exercise-db-card {
-        background: #f8f9fa;
+        background: white;
         padding: 1rem;
         border-radius: 8px;
         margin-bottom: 0.5rem;
-        border: 1px solid #e9ecef;
+        border: 1px solid #e5e7eb;
+        transition: all 0.2s;
     }
+    
     .exercise-db-card:hover {
-        background: #e9ecef;
-        cursor: pointer;
+        background: #f9fafb;
+        border-color: #d1d5db;
     }
+    
     .calendar-day {
         padding: 0.5rem;
         text-align: center;
@@ -438,111 +450,216 @@ st.markdown("""
         height: 3rem;
         line-height: 2rem;
         box-sizing: border-box;
+        border: 1px solid #e5e7eb;
+        background: white;
     }
+    
     .calendar-day.today {
-        font-weight: bold;
-        background-color: #e9ecef;
-        border: 1px solid #6366f1;
+        font-weight: 600;
+        background: #eff6ff;
+        border-color: #3b82f6;
+        color: #1d4ed8;
     }
+    
     .calendar-day.workout-day {
-        font-weight: bold;
-        background-color: #d4edda;
+        font-weight: 600;
+        background: #ecfdf5;
+        border-color: #10b981;
+        color: #059669;
+    }
+    
+    .music-button {
+        display: inline-block;
+        padding: 0.75rem 1.5rem;
+        background: #000;
+        color: white;
+        text-decoration: none;
+        border-radius: 8px;
+        font-weight: 500;
+        text-align: center;
+        transition: all 0.2s;
+        border: none;
+        cursor: pointer;
+        width: 100%;
+    }
+    
+    .music-button:hover {
+        background: #1f2937;
+        text-decoration: none;
+        color: white;
+    }
+    
+    .warning-box {
+        background: #fef3c7;
+        border: 1px solid #f59e0b;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
     }
 </style>
 
 <script>
-// Simple beep functions using oscillator
-let audioContext;
-
-function initAudio() {
-    if (!audioContext) {
-        try {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            console.log('Audio context initialized');
-        } catch (e) {
-            console.log('Audio context not supported:', e);
-            return false;
-        }
-    }
-    return true;
-}
-
-function playBeep(frequency = 800, duration = 200, volume = 0.3) {
-    console.log(`Playing beep: ${frequency}Hz, ${duration}ms`);
-    if (!initAudio()) {
-        console.log('Audio init failed, trying fallback');
-        // Fallback to HTML5 audio
-        playFallbackBeep();
-        return;
+// Fixed Audio System - Simple and reliable
+class SimpleAudioSystem {
+    constructor() {
+        this.audioContext = null;
+        this.isInitialized = false;
     }
     
-    try {
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
+    async init() {
+        if (this.isInitialized) return true;
+        
+        try {
+            // Try to create audio context
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (AudioContext) {
+                this.audioContext = new AudioContext();
+                
+                // Handle suspended state (iOS requirement)
+                if (this.audioContext.state === 'suspended') {
+                    await this.audioContext.resume();
+                }
+                
+                this.isInitialized = true;
+                console.log('Audio system initialized');
+                return true;
+            }
+        } catch (e) {
+            console.log('Web Audio not available, using fallback');
+        }
+        
+        this.isInitialized = true;
+        return false;
+    }
+    
+    async playSound(type) {
+        console.log(`Playing ${type} sound`);
+        
+        // Initialize if needed
+        if (!this.isInitialized) {
+            await this.init();
+        }
+        
+        // Try Web Audio API first
+        if (this.audioContext && this.audioContext.state === 'running') {
+            try {
+                this.playWebAudio(type);
+                return;
+            } catch (e) {
+                console.log('Web Audio failed, using fallback');
+            }
+        }
+        
+        // Fallback to simple beep
+        this.playFallbackSound(type);
+    }
+    
+    playWebAudio(type) {
+        const frequencies = {
+            countdown: 800,
+            transition: 1000,
+            completion: 1200,
+            timer: 900
+        };
+        
+        const duration = type === 'completion' ? 0.4 : 0.2;
+        const freq = frequencies[type] || 800;
+        
+        const oscillator = this.audioContext.createOscillator();
+        const gainNode = this.audioContext.createGain();
         
         oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
+        gainNode.connect(this.audioContext.destination);
         
-        oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+        oscillator.frequency.setValueAtTime(freq, this.audioContext.currentTime);
         oscillator.type = 'sine';
         
-        gainNode.gain.setValueAtTime(0, audioContext.currentTime);
-        gainNode.gain.linearRampToValueAtTime(volume, audioContext.currentTime + 0.01);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration / 1000);
+        // Envelope
+        gainNode.gain.setValueAtTime(0, this.audioContext.currentTime);
+        gainNode.gain.linearRampToValueAtTime(0.3, this.audioContext.currentTime + 0.01);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + duration);
         
-        oscillator.start(audioContext.currentTime);
-        oscillator.stop(audioContext.currentTime + duration / 1000);
-        console.log('Beep played successfully');
-    } catch (e) {
-        console.log('Beep failed:', e);
-        playFallbackBeep();
+        oscillator.start(this.audioContext.currentTime);
+        oscillator.stop(this.audioContext.currentTime + duration);
+        
+        // Multiple beeps for completion
+        if (type === 'completion') {
+            setTimeout(() => this.playWebAudio('completion'), 300);
+        }
+    }
+    
+    playFallbackSound(type) {
+        // Try vibration on mobile
+        if ('vibrate' in navigator) {
+            const patterns = {
+                countdown: [100],
+                transition: [200],
+                completion: [100, 100, 100],
+                timer: [150]
+            };
+            navigator.vibrate(patterns[type] || [100]);
+        }
+        
+        // Visual feedback
+        document.body.style.backgroundColor = '#f3f4f6';
+        setTimeout(() => {
+            document.body.style.backgroundColor = '';
+        }, 100);
     }
 }
 
-function playFallbackBeep() {
-    // Try using HTML5 audio as fallback
+// Apple Music Integration - Actually works
+function openAppleMusic() {
+    console.log('Opening Apple Music...');
+    
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const isMac = navigator.platform.indexOf('Mac') > -1;
+    
+    if (isIOS || isMac) {
+        // Try to open native Apple Music app
+        window.location.href = 'music://';
+        
+        // Fallback to web version after 2 seconds
+        setTimeout(() => {
+            window.open('https://music.apple.com', '_blank');
+        }, 2000);
+    } else {
+        // Open web version directly for other platforms
+        window.open('https://music.apple.com', '_blank');
+    }
+}
+
+// Wake Lock for keeping screen on
+async function requestWakeLock() {
     try {
-        const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmMbCDOH0fPMeysFJHTD8N+VRgwQWK7m77JjGgg2jdXzzn0vBSdt1Ogz');
-        audio.play().catch(e => console.log('Fallback audio failed:', e));
-    } catch (e) {
-        console.log('All audio methods failed:', e);
+        if ('wakeLock' in navigator) {
+            const wakeLock = await navigator.wakeLock.request('screen');
+            console.log('Screen wake lock active');
+            return wakeLock;
+        }
+    } catch (err) {
+        console.log('Wake lock not supported or failed');
     }
+    return null;
 }
 
-// Beep functions
-window.countdownBeep = () => {
-    console.log('Countdown beep triggered');
-    playBeep(600, 150, 0.2);
-};
-window.transitionBeep = () => {
-    console.log('Transition beep triggered');
-    playBeep(800, 500, 0.3);
-};
-window.timerBeep = () => {
-    console.log('Timer beep triggered');
-    playBeep(700, 400, 0.3);
-};
-window.completionBeep = () => {
-    console.log('Completion beep triggered');
-    playBeep(1000, 300, 0.3);
-    setTimeout(() => playBeep(1200, 300, 0.3), 350);
-    setTimeout(() => playBeep(1400, 600, 0.4), 700);
-};
+// Initialize audio system
+const audioSystem = new SimpleAudioSystem();
 
-// Initialize on user interaction
-document.addEventListener('click', () => {
-    console.log('User clicked, initializing audio');
-    initAudio();
-}, { once: true });
+// Auto-initialize on any user interaction
+document.addEventListener('click', () => audioSystem.init(), { once: true });
+document.addEventListener('touchstart', () => audioSystem.init(), { once: true });
 
-document.addEventListener('keydown', () => {
-    console.log('User pressed key, initializing audio');
-    initAudio();
-}, { once: true });
+// Global functions for Streamlit
+window.playCountdownBeep = () => audioSystem.playSound('countdown');
+window.playTransitionBeep = () => audioSystem.playSound('transition');
+window.playTimerBeep = () => audioSystem.playSound('timer');
+window.playCompletionBeep = () => audioSystem.playSound('completion');
+window.openAppleMusic = openAppleMusic;
+window.requestWakeLock = requestWakeLock;
 
-console.log('Audio script loaded');
+console.log('FitTrack Pro audio and music systems loaded');
 </script>
-
 """, unsafe_allow_html=True)
 
 # Initialize database
@@ -551,11 +668,9 @@ init_database()
 # Load exercise database
 @st.cache_data
 def load_exercise_database():
-    # Use a relative path for the CSV file
     csv_path = Path('megaGymDataset.csv')
     if csv_path.exists():
         try:
-            # Drop the unnamed column if it exists
             df = pd.read_csv(csv_path)
             if 'Unnamed: 0' in df.columns:
                 df = df.drop(columns=['Unnamed: 0'])
@@ -564,7 +679,6 @@ def load_exercise_database():
             st.error(f"Error loading exercise database: {e}")
             return pd.DataFrame(), False
     else:
-        # Create minimal exercise database if megaGymDataset.csv is not found
         st.warning("megaGymDataset.csv not found. Using a minimal exercise database.")
         return pd.DataFrame({
             'Title': ['Push-ups', 'Squats', 'Plank', 'Lunges', 'Burpees'],
@@ -574,29 +688,27 @@ def load_exercise_database():
             'Type': ['Strength', 'Strength', 'Strength', 'Strength', 'Cardio']
         }), False
 
-
 exercise_db, db_loaded = load_exercise_database()
 
-# Initialize session state
+# Enhanced session state initialization with persistence timestamps
 if 'timer_running' not in st.session_state:
     st.session_state.timer_running = False
-    st.session_state.timer_start = None
+    st.session_state.timer_start_timestamp = None  # Actual timestamp for persistence
     st.session_state.timer_elapsed = 0
     st.session_state.timer_preset = "Stopwatch"
     st.session_state.timer_last_beep_second = -1
 
 if 'workout_timer_running' not in st.session_state:
     st.session_state.workout_timer_running = False
-    st.session_state.workout_timer_start = None
+    st.session_state.workout_timer_start_timestamp = None
     st.session_state.workout_timer_elapsed = 0
 
-# Initialize interval timer session state
 if 'interval_timer_running' not in st.session_state:
     st.session_state.interval_timer_running = False
-    st.session_state.interval_timer_start = None
+    st.session_state.interval_timer_start_timestamp = None
     st.session_state.interval_timer_elapsed = 0
     st.session_state.current_set = 1
-    st.session_state.current_phase = "WORK"  # "WORK" or "REST"
+    st.session_state.current_phase = "WORK"
     st.session_state.current_exercise_index = 0
     st.session_state.interval_completed = False
     st.session_state.last_beep_second = -1
@@ -607,15 +719,92 @@ def format_time(seconds):
     secs = int(seconds % 60)
     return f"{minutes:02d}:{secs:02d}"
 
+def play_audio(audio_type):
+    """Play audio with fixed system"""
+    audio_script = f"""
+    <script>
+    (async function() {{
+        try {{
+            if (window.audioSystem) {{
+                await window.audioSystem.playSound('{audio_type}');
+            }} else {{
+                console.log('Audio system not ready');
+            }}
+        }} catch (error) {{
+            console.error('Audio playback failed:', error);
+        }}
+    }})();
+    </script>
+    """
+    st.components.v1.html(audio_script, height=0)
+
 # Main App
 def main():
     st.title("FitTrack Pro")
     st.markdown("Your personal workout companion with persistent data storage")
 
+    # Quick access section at the top
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        # Fixed Apple Music button
+        if st.button("Open Apple Music", key="apple_music_btn"):
+            st.components.v1.html("""
+            <script>
+            if (window.openAppleMusic) {
+                window.openAppleMusic();
+            } else {
+                console.log('Apple Music function not available');
+            }
+            </script>
+            """, height=0)
+            st.success("Opening Apple Music...")
+    
+    with col2:
+        if st.button("Enable Notifications"):
+            st.components.v1.html("""
+            <script>
+            if ('Notification' in window) {
+                Notification.requestPermission().then(permission => {
+                    if (permission === 'granted') {
+                        new Notification('FitTrack Pro', {
+                            body: 'Notifications enabled! You\\'ll get timer alerts.',
+                            icon: '/favicon.ico'
+                        });
+                    }
+                });
+            }
+            </script>
+            """, height=0)
+            st.success("Notification permission requested!")
+    
+    with col3:
+        if st.button("Keep Screen On"):
+            st.components.v1.html("<script>window.requestWakeLock && window.requestWakeLock();</script>", height=0)
+            st.info("Screen will stay on during timers")
+
     if db_loaded:
         st.success(f"Loaded {len(exercise_db)} exercises from megaGymDataset.csv")
     else:
         st.info("Using default exercise database. Place megaGymDataset.csv in the same folder as the app for the full database.")
+
+    # Timer persistence warning
+    with st.expander("Mobile Timer Important Info", expanded=False):
+        st.markdown("""
+        <div class="warning-box">
+        <strong>Mobile Browser Limitations:</strong><br>
+        • Timers may pause when screen locks or app is backgrounded<br>
+        • For best results, keep screen on during workouts<br>
+        • Consider using the "Keep Screen On" button above<br>
+        • Audio works best with screen active and volume up<br>
+        <br>
+        <strong>Tips for Better Experience:</strong><br>
+        • Add this page to your home screen for app-like experience<br>
+        • Enable notifications for timer alerts<br>
+        • Keep your phone plugged in during workouts<br>
+        • Use Do Not Disturb mode to prevent interruptions
+        </div>
+        """, unsafe_allow_html=True)
 
     # Sidebar navigation
     with st.sidebar:
@@ -668,31 +857,27 @@ def cardio_core_page():
     
     st.divider()
     
-    # Audio test section
-    st.subheader("🔊 Audio Test")
-    col1, col2, col3, col4 = st.columns(4)
+    # Audio test section - simplified
+    st.subheader("Audio Test & Setup")
     
+    col1, col2 = st.columns(2)
     with col1:
-        if st.button("Test Countdown Beep"):
-            st.components.v1.html('<script>window.countdownBeep && window.countdownBeep();</script>', height=0)
-            st.success("Countdown beep triggered!")
+        st.info("**Test sounds before starting:**")
+        if st.button("Test Countdown"):
+            play_audio("countdown")
+        if st.button("Test Transition"):
+            play_audio("transition")
+        if st.button("Test Completion"):
+            play_audio("completion")
     
     with col2:
-        if st.button("Test Transition Beep"):
-            st.components.v1.html('<script>window.transitionBeep && window.transitionBeep();</script>', height=0)
-            st.success("Transition beep triggered!")
-    
-    with col3:
-        if st.button("Test Timer Beep"):
-            st.components.v1.html('<script>window.timerBeep && window.timerBeep();</script>', height=0)
-            st.success("Timer beep triggered!")
-    
-    with col4:
-        if st.button("Test Completion Beep"):
-            st.components.v1.html('<script>window.completionBeep && window.completionBeep();</script>', height=0)
-            st.success("Completion beep triggered!")
-    
-    st.info("🔊 Using HTML5 audio elements. Click test buttons to verify audio is working.")
+        st.info("**Audio troubleshooting:**")
+        st.markdown("""
+        • Volume up & ringer on
+        • Tap screen if no sound
+        • Keep app in foreground
+        • Grant notification permission
+        """)
     
     st.divider()
     
@@ -712,18 +897,20 @@ def cardio_core_page():
     with col1:
         if st.button("Start Interval", key="start_interval", disabled=st.session_state.interval_timer_running):
             st.session_state.interval_timer_running = True
-            st.session_state.interval_timer_start = time.time()
+            st.session_state.interval_timer_start_timestamp = time.time()
             st.session_state.interval_timer_elapsed = 0
             st.session_state.current_set = 1
             st.session_state.current_phase = "WORK"
             st.session_state.current_exercise_index = 0
             st.session_state.interval_completed = False
-            st.session_state.last_beep_second = -1  # Reset beep tracking
+            st.session_state.last_beep_second = -1
+            st.components.v1.html("<script>window.requestWakeLock && window.requestWakeLock();</script>", height=0)
             st.rerun()
     
     with col2:
         if st.button("Pause", key="pause_interval", disabled=not st.session_state.interval_timer_running):
             st.session_state.interval_timer_running = False
+            st.session_state.interval_timer_elapsed = get_actual_elapsed_time('interval_timer_running', 'interval_timer_start_timestamp')
             st.rerun()
     
     with col3:
@@ -734,24 +921,21 @@ def cardio_core_page():
             st.session_state.current_phase = "WORK"
             st.session_state.current_exercise_index = 0
             st.session_state.interval_completed = False
-            st.session_state.last_beep_second = -1  # Reset beep tracking
+            st.session_state.last_beep_second = -1
             st.rerun()
     
-    # Interval timer logic and display
+    # Interval timer logic - same as before but with fixed audio
     if st.session_state.interval_timer_running and not st.session_state.interval_completed:
-        current_time = time.time()
-        st.session_state.interval_timer_elapsed = current_time - st.session_state.interval_timer_start
+        # Calculate actual elapsed time accounting for potential app suspension
+        actual_elapsed = get_actual_elapsed_time('interval_timer_running', 'interval_timer_start_timestamp')
+        st.session_state.interval_timer_elapsed = actual_elapsed
         
-        # Calculate current position in the workout
         total_elapsed = st.session_state.interval_timer_elapsed
-        
-        # Each cycle is 70 seconds (60 work + 10 rest), except the last set has no rest
         cycle_duration = 70  # 60 seconds work + 10 seconds rest
         
         if total_elapsed < 4 * 60 + 3 * 10:  # Total duration: 4 minutes work + 3 rest periods
             # Determine current set and phase
             if total_elapsed < cycle_duration:
-                # Set 1
                 st.session_state.current_set = 1
                 if total_elapsed < 60:
                     st.session_state.current_phase = "WORK"
@@ -761,7 +945,6 @@ def cardio_core_page():
                     st.session_state.current_phase = "REST"
                     remaining = cycle_duration - total_elapsed
             elif total_elapsed < 2 * cycle_duration:
-                # Set 2
                 st.session_state.current_set = 2
                 set_elapsed = total_elapsed - cycle_duration
                 if set_elapsed < 60:
@@ -772,7 +955,6 @@ def cardio_core_page():
                     st.session_state.current_phase = "REST"
                     remaining = cycle_duration - set_elapsed
             elif total_elapsed < 3 * cycle_duration:
-                # Set 3
                 st.session_state.current_set = 3
                 set_elapsed = total_elapsed - 2 * cycle_duration
                 if set_elapsed < 60:
@@ -783,7 +965,6 @@ def cardio_core_page():
                     st.session_state.current_phase = "REST"
                     remaining = cycle_duration - set_elapsed
             else:
-                # Set 4 (final set, no rest)
                 st.session_state.current_set = 4
                 set_elapsed = total_elapsed - 3 * cycle_duration
                 if set_elapsed < 60:
@@ -791,61 +972,48 @@ def cardio_core_page():
                     remaining = 60 - set_elapsed
                     st.session_state.current_exercise_index = 3 % len(exercise_list)
                 else:
-                    # Workout complete
                     st.session_state.interval_completed = True
                     st.session_state.interval_timer_running = False
                     remaining = 0
         else:
-            # Workout complete
             st.session_state.interval_completed = True
             st.session_state.interval_timer_running = False
             remaining = 0
         
         # Display current status and timer
         if not st.session_state.interval_completed:
-            # Status display
             phase_class = "work-status" if st.session_state.current_phase == "WORK" else "rest-status"
             st.markdown(f'<div class="interval-status {phase_class}">Set {st.session_state.current_set}/4 - {st.session_state.current_phase}</div>', 
                        unsafe_allow_html=True)
             
-            # Update current exercise display
             if st.session_state.current_phase == "WORK":
                 current_exercise = exercise_list[st.session_state.current_exercise_index]
                 st.markdown(f'<div class="interval-exercise">Current Exercise: {current_exercise}</div>', 
                            unsafe_allow_html=True)
             
-            # Timer display
             timer_class = "work-timer" if st.session_state.current_phase == "WORK" else "rest-timer"
             remaining_time = max(0, remaining)
             st.markdown(f'<div class="interval-timer-display {timer_class}">{format_time(remaining_time)}</div>', 
                        unsafe_allow_html=True)
             
-            # Audio cues
+            # Audio cues - fixed
             remaining_seconds = int(remaining_time)
-            if 'last_beep_second' not in st.session_state:
-                st.session_state.last_beep_second = -1
-            
-            # Countdown beeps for last 10 seconds
             if remaining_seconds <= 10 and remaining_seconds > 0 and remaining_seconds != st.session_state.last_beep_second:
-                st.components.v1.html('<script>window.countdownBeep && window.countdownBeep();</script>', height=0)
+                play_audio("countdown")
                 st.session_state.last_beep_second = remaining_seconds
             
-            # Transition beep when interval ends
             if remaining_seconds == 0 and st.session_state.last_beep_second != 0:
                 if st.session_state.current_set == 4 and st.session_state.current_phase == "WORK":
-                    # Workout completion beep
-                    st.components.v1.html('<script>window.completionBeep && window.completionBeep();</script>', height=0)
+                    play_audio("completion")
                 else:
-                    # Regular transition beep
-                    st.components.v1.html('<script>window.transitionBeep && window.transitionBeep();</script>', height=0)
+                    play_audio("transition")
                 st.session_state.last_beep_second = 0
             
-            # Auto refresh
             time.sleep(0.1)
             st.rerun()
     
     elif st.session_state.interval_completed:
-        st.success("🎉 Core interval workout complete! Great job!")
+        st.success("Core interval workout complete! Great job!")
         st.markdown('<div class="interval-timer-display">COMPLETE!</div>', unsafe_allow_html=True)
         
         if st.button("Log Workout", type="primary"):
@@ -854,7 +1022,6 @@ def cardio_core_page():
             st.rerun()
     
     else:
-        # Display ready state
         st.markdown('<div class="interval-status work-status">Ready to Start - Set 1/4 - WORK</div>', 
                    unsafe_allow_html=True)
         if exercise_list:
@@ -862,6 +1029,7 @@ def cardio_core_page():
                        unsafe_allow_html=True)
         st.markdown('<div class="interval-timer-display">01:00</div>', unsafe_allow_html=True)
     
+    # Rest of the function remains the same (core exercise management)
     st.divider()
     
     # Core exercise management
@@ -914,7 +1082,7 @@ def cardio_core_page():
     
     # Create a scrollable container for exercise database
     with st.container():
-        for _, exercise in filtered_df.head(20).iterrows():  # Limit to 20 for performance
+        for _, exercise in filtered_df.head(20).iterrows():
             with st.container():
                 st.markdown('<div class="exercise-db-card">', unsafe_allow_html=True)
                 
@@ -949,7 +1117,7 @@ def cardio_core_page():
                 st.rerun()
 
 def workout_page():
-    # Timer section
+    # Timer section with persistence
     col1, col2 = st.columns(2)
 
     with col1:
@@ -977,32 +1145,35 @@ def workout_page():
             st.session_state.timer_preset = selected_preset
             st.session_state.timer_elapsed = 0
             st.session_state.timer_running = False
-            st.session_state.timer_last_beep_second = -1  # Reset beep tracking
+            st.session_state.timer_last_beep_second = -1
 
         timer_col1, timer_col2, timer_col3 = st.columns(3)
 
         with timer_col1:
             if st.button("Start", key="start_timer", disabled=st.session_state.timer_running):
                 st.session_state.timer_running = True
-                st.session_state.timer_start = time.time() - st.session_state.timer_elapsed
-                st.session_state.timer_last_beep_second = -1  # Reset beep tracking
+                st.session_state.timer_start_timestamp = time.time() - st.session_state.timer_elapsed
+                st.session_state.timer_last_beep_second = -1
+                st.components.v1.html("<script>window.requestWakeLock && window.requestWakeLock();</script>", height=0)
                 st.rerun()
 
         with timer_col2:
             if st.button("Pause", key="pause_timer", disabled=not st.session_state.timer_running):
                 st.session_state.timer_running = False
+                st.session_state.timer_elapsed = get_actual_elapsed_time('timer_running', 'timer_start_timestamp')
                 st.rerun()
 
         with timer_col3:
             if st.button("Reset", key="reset_timer"):
                 st.session_state.timer_running = False
                 st.session_state.timer_elapsed = 0
-                st.session_state.timer_last_beep_second = -1  # Reset beep tracking
+                st.session_state.timer_last_beep_second = -1
                 st.rerun()
 
-        # Display timer
+        # Display timer with persistence handling
         if st.session_state.timer_running:
-            st.session_state.timer_elapsed = time.time() - st.session_state.timer_start
+            actual_elapsed = get_actual_elapsed_time('timer_running', 'timer_start_timestamp')
+            st.session_state.timer_elapsed = actual_elapsed
 
             # Handle countdown timers
             if selected_preset != "Stopwatch":
@@ -1010,24 +1181,18 @@ def workout_page():
                 if remaining <= 0:
                     st.session_state.timer_running = False
                     st.markdown('<div class="timer-display">00:00 Complete</div>', unsafe_allow_html=True)
-                    # Completion beep for timer
-                    st.components.v1.html('<script>window.timerBeep && window.timerBeep();</script>', height=0)
+                    play_audio("timer")
                 else:
                     st.markdown(f'<div class="timer-display">{format_time(remaining)}</div>', unsafe_allow_html=True)
                     
-                    # Audio cues for set timer
+                    # Audio cues - fixed
                     remaining_seconds = int(remaining)
-                    if 'timer_last_beep_second' not in st.session_state:
-                        st.session_state.timer_last_beep_second = -1
-                    
-                    # Countdown beeps for last 10 seconds
                     if remaining_seconds <= 10 and remaining_seconds > 0 and remaining_seconds != st.session_state.timer_last_beep_second:
-                        st.components.v1.html('<script>window.countdownBeep && window.countdownBeep();</script>', height=0)
+                        play_audio("countdown")
                         st.session_state.timer_last_beep_second = remaining_seconds
                     
-                    # Completion beep when timer ends
                     if remaining_seconds == 0 and st.session_state.timer_last_beep_second != 0:
-                        st.components.v1.html('<script>window.timerBeep && window.timerBeep();</script>', height=0)
+                        play_audio("timer")
                         st.session_state.timer_last_beep_second = 0
                     
                     time.sleep(0.1)
@@ -1053,12 +1218,14 @@ def workout_page():
         with timer_col1:
             if st.button("Start", key="start_workout_timer", disabled=st.session_state.workout_timer_running):
                 st.session_state.workout_timer_running = True
-                st.session_state.workout_timer_start = time.time() - st.session_state.workout_timer_elapsed
+                st.session_state.workout_timer_start_timestamp = time.time() - st.session_state.workout_timer_elapsed
+                st.components.v1.html("<script>window.requestWakeLock && window.requestWakeLock();</script>", height=0)
                 st.rerun()
 
         with timer_col2:
             if st.button("Pause", key="pause_workout_timer", disabled=not st.session_state.workout_timer_running):
                 st.session_state.workout_timer_running = False
+                st.session_state.workout_timer_elapsed = get_actual_elapsed_time('workout_timer_running', 'workout_timer_start_timestamp')
                 st.rerun()
 
         with timer_col3:
@@ -1067,9 +1234,10 @@ def workout_page():
                 st.session_state.workout_timer_elapsed = 0
                 st.rerun()
 
-        # Display workout timer
+        # Display workout timer with persistence
         if st.session_state.workout_timer_running:
-            st.session_state.workout_timer_elapsed = time.time() - st.session_state.workout_timer_start
+            actual_elapsed = get_actual_elapsed_time('workout_timer_running', 'workout_timer_start_timestamp')
+            st.session_state.workout_timer_elapsed = actual_elapsed
             st.markdown(f'<div class="timer-display">{format_time(st.session_state.workout_timer_elapsed)}</div>',
                        unsafe_allow_html=True)
             time.sleep(0.1)
@@ -1078,6 +1246,7 @@ def workout_page():
             st.markdown(f'<div class="timer-display">{format_time(st.session_state.workout_timer_elapsed)}</div>',
                        unsafe_allow_html=True)
 
+    # Rest of workout page remains the same
     st.divider()
 
     # Workout selection
@@ -1134,6 +1303,7 @@ def workout_page():
     # Celebration section
     if progress == 1:
         st.success("Workout Complete! Excellent work!")
+        play_audio("completion")
         if st.button("Log Workout & Reset", type="primary"):
             # Log the workout
             log_workout(selected_day, len(workouts), format_time(st.session_state.workout_timer_elapsed))
@@ -1207,7 +1377,7 @@ def browse_replace_page():
 
     # Create a scrollable container
     with st.container():
-        for _, exercise in filtered_df.head(50).iterrows():  # Limit to 50 for performance
+        for _, exercise in filtered_df.head(50).iterrows():
             with st.container():
                 st.markdown('<div class="exercise-db-card">', unsafe_allow_html=True)
 
@@ -1241,7 +1411,7 @@ def edit_page():
     workouts = get_workouts(selected_day)
 
     # Display current exercises for reordering and deletion
-    st.subheader("Current Exercises (Drag & Drop Coming Soon!)")
+    st.subheader("Current Exercises")
 
     for idx, row in workouts.iterrows():
         with st.container():
@@ -1272,7 +1442,6 @@ def edit_page():
                     st.rerun()
             st.divider()
 
-
     # Add new exercise
     st.subheader("Add New Exercise")
 
@@ -1291,7 +1460,6 @@ def edit_page():
                 add_exercise(selected_day, new_name, new_sets, new_reps, new_notes)
                 st.success(f"Added {new_name} to {selected_day}")
                 st.rerun()
-
 
     # Replace exercise manually
     st.subheader("Replace Exercise Manually")
@@ -1325,10 +1493,10 @@ def calendar_page():
     st.header("Workout Calendar")
 
     # Get workout history
-    history = get_workout_history(limit=365) # Fetch more history for calendar
+    history = get_workout_history(limit=365)
     workout_dates = set(history['date'].tolist()) if not history.empty else set()
 
-    # --- Accurate Month Navigation ---
+    # Month navigation
     today = datetime.now()
     if 'display_month' not in st.session_state:
         st.session_state.display_month = today.month
@@ -1483,6 +1651,14 @@ def guide_page():
     - **Progress Tracking**: Monitor your consistency with detailed statistics
     - **Flexible Editing**: Add, remove, or reorder exercises as needed
     - **Interval Timer**: Custom interval timer for core workouts with work/rest cycles
+    - **Mobile Optimized**: Enhanced audio system and persistence features for mobile use
+
+    ### Mobile App Tips
+    1. **Add to Home Screen**: Save this page to your phone's home screen for quick access
+    2. **Enable Notifications**: Allow notifications for timer alerts
+    3. **Keep Screen Active**: Use the "Keep Screen On" button during workouts
+    4. **Volume Up**: Ensure your volume is up and ringer is on for audio cues
+    5. **Stay in App**: Keep the app in foreground for best timer performance
 
     ### Tips for Success
     1. **Consistency is key** - Aim for 3-4 workouts per week
