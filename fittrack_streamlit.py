@@ -2,1799 +2,963 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 from datetime import datetime, timedelta
-import json
 from pathlib import Path
 import time
 import calendar
+import json
 import base64
+import os
 
-# Database setup functions remain the same
+# =========================
+# CONFIG
+# =========================
+APP_DB = "fittrack.db"
+EXERCISE_CSV_PRIMARY = Path("/Users/johndattoma/Downloads/workout app/megaGymDataset.csv")
+EXERCISE_CSV_FALLBACK = Path("megaGymDataset.csv")
+
+st.set_page_config(
+    page_title="FitTrack Pro",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# =========================
+# GLOBAL CSS + JS (Audio, Wake Lock, Apple Music, Sticky Header)
+# =========================
+st.markdown("""
+<style>
+:root{
+  --bg:#0b1020; --card:#0f1530; --muted:#9aa3b2; --text:#e6ebf4; --brand:#7aa2ff; --brand-2:#22c55e; --warn:#f59e0b; --ok:#10b981;
+  --border: #1f2747;
+}
+html,body,.main{
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Inter,system-ui,sans-serif;
+}
+.block-container{padding-top:1rem; padding-bottom:3rem;}
+h1,h2,h3{letter-spacing:.2px}
+.stTabs [data-baseweb="tab-list"]{gap:.5rem}
+.stTabs [data-baseweb="tab"]{
+  background: var(--card); color: var(--text); border: 1px solid var(--border);
+  border-radius:10px; padding:.6rem 1rem; font-weight:600
+}
+.stTabs [aria-selected="true"]{outline: 2px solid var(--brand); color: white}
+.card{
+  background: var(--card); border:1px solid var(--border);
+  border-radius:16px; padding:1.0rem; box-shadow: 0 10px 30px rgba(0,0,0,.25)
+}
+.btn .stButton>button{
+  width:100%; height:3rem; border-radius:12px; border:1px solid var(--border);
+  background:linear-gradient(180deg,#1a2346,#0f1735); color:#fff; font-weight:600
+}
+.btn .stButton>button:hover{filter:brightness(1.15)}
+.stat{
+  text-align:center; border-radius:16px; padding:1rem; background:var(--card); border:1px solid var(--border)
+}
+.stat .value{font-size:2.2rem; font-weight:800; color: var(--brand)}
+.stat .label{color: var(--muted)}
+.timer{
+  font-variant-numeric: tabular-nums; text-align:center; font-size:4rem; font-weight:800;
+  padding:1rem 1.25rem; border-radius:14px; background:#0b1433; border:1px dashed var(--border)
+}
+.timer.work{border-color: var(--ok); box-shadow: inset 0 0 0 1px rgba(16,185,129,.25)}
+.timer.rest{border-color: var(--warn); box-shadow: inset 0 0 0 1px rgba(245,158,11,.25)}
+.badge{display:inline-block; padding:.35rem .6rem; border-radius:999px; font-weight:700; font-size:.85rem}
+.badge.ok{background:rgba(16,185,129,.15); color:#86efac; border:1px solid rgba(16,185,129,.35)}
+.badge.warn{background:rgba(245,158,11,.15); color:#fde68a; border:1px solid rgba(245,158,11,.35)}
+.progress-wrap{background:#0b1433;border-radius:12px;border:1px solid var(--border);padding:.3rem}
+.progress-bar{height:12px;border-radius:8px;background:linear-gradient(90deg,var(--brand),#8b5cf6)}
+.exercise{border:1px solid var(--border); border-radius:12px; padding:1rem; background:#0a1230}
+.exercise.done{background:rgba(16,185,129,.12); border-color:rgba(16,185,129,.35)}
+.calendar-day{padding:.6rem; text-align:center; border-radius:8px; border:1px solid var(--border); background:#0a1230}
+.calendar-day.today{outline:2px solid var(--brand)}
+.calendar-day.workout{outline:2px solid var(--ok)}
+hr{border-color:var(--border)}
+.small{color:var(--muted); font-size:.95rem}
+.success{color:#86efac}
+.warn{color:#fde68a}
+</style>
+
+<script>
+// ----- Simple Audio System with WebAudio + vibration fallback -----
+class SimpleAudioSystem {
+  constructor(){
+    this.audioContext = null;
+    this.initialized = false;
+  }
+  async init(){
+    if(this.initialized) return true;
+    try{
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if(Ctx){
+        this.audioContext = new Ctx();
+        if(this.audioContext.state === 'suspended'){
+          await this.audioContext.resume();
+        }
+        this.initialized = true;
+        console.log('Audio initialized');
+        return true;
+      }
+    }catch(e){ console.log('WebAudio not available', e); }
+    this.initialized = true;
+    return false;
+  }
+  async play(type){
+    if(!this.initialized) await this.init();
+    if(this.audioContext && this.audioContext.state === 'running'){
+      this._beep(type);
+    } else {
+      this._fallback(type);
+    }
+  }
+  _beep(type){
+    const map = { countdown:820, transition:980, completion:1200, timer:900 };
+    const dur = type==='completion'?0.35:0.2;
+    const osc = this.audioContext.createOscillator();
+    const gain = this.audioContext.createGain();
+    osc.connect(gain); gain.connect(this.audioContext.destination);
+    osc.frequency.value = map[type] || 800;
+    osc.type = 'sine';
+    const t = this.audioContext.currentTime;
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(0.35, t+.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, t+dur);
+    osc.start(t); osc.stop(t+dur);
+    if(type==='completion'){
+      setTimeout(()=>this._beep('completion'), 260);
+    }
+  }
+  _fallback(type){
+    if('vibrate' in navigator){
+      const pat = {countdown:[80], transition:[140], completion:[80,80,80], timer:[120]};
+      navigator.vibrate(pat[type] || [80]);
+    }
+    document.body.style.outline = '3px solid rgba(122,162,255,.65)';
+    setTimeout(()=>{document.body.style.outline='none';}, 180);
+  }
+}
+window.__fitAudio = new SimpleAudioSystem();
+document.addEventListener('click', ()=>window.__fitAudio.init(), {once:true});
+document.addEventListener('touchstart', ()=>window.__fitAudio.init(), {once:true});
+
+window.playCountdownBeep = () => window.__fitAudio.play('countdown');
+window.playTransitionBeep = () => window.__fitAudio.play('transition');
+window.playTimerBeep = () => window.__fitAudio.play('timer');
+window.playCompletionBeep = () => window.__fitAudio.play('completion');
+
+window.openAppleMusic = () => {
+  const isiOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const isMac = navigator.platform.indexOf('Mac')>-1;
+  if(isiOS){ window.location.href='music://'; setTimeout(()=>{ window.open('https://apps.apple.com/app/apple-music/id1108187390','_blank'); },1500); }
+  else if(isMac){ window.location.href='music://'; }
+  else { window.open('https://music.apple.com','_blank'); }
+};
+window.requestWakeLock = async() => {
+  try{
+    if('wakeLock' in navigator){
+      const wl = await navigator.wakeLock.request('screen');
+      wl.addEventListener('release', ()=>console.log('Wake lock released'));
+      return wl;
+    }
+  }catch(e){ console.log('WakeLock fail', e); }
+  return null;
+};
+</script>
+""", unsafe_allow_html=True)
+
+# =========================
+# DB INIT & HELPERS
+# =========================
+def db_conn():
+    return sqlite3.connect(APP_DB)
+
 def init_database():
-    """Initialize SQLite database with tables"""
-    conn = sqlite3.connect('fittrack.db')
+    conn = db_conn()
     c = conn.cursor()
-
-    # Create tables
-    c.execute('''CREATE TABLE IF NOT EXISTS workouts
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  day TEXT NOT NULL,
-                  exercise_name TEXT NOT NULL,
-                  sets INTEGER,
-                  reps TEXT,
-                  notes TEXT,
-                  exercise_order INTEGER)''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS workout_history
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  date TEXT NOT NULL,
-                  day TEXT NOT NULL,
-                  exercises_completed INTEGER,
-                  duration TEXT,
-                  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS exercise_completion
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  day TEXT NOT NULL,
-                  exercise_index INTEGER,
-                  completed BOOLEAN,
-                  date TEXT)''')
-
-    # Create core exercises table
-    c.execute('''CREATE TABLE IF NOT EXISTS core_exercises
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  exercise_name TEXT NOT NULL,
-                  exercise_order INTEGER)''')
-
+    c.execute("""CREATE TABLE IF NOT EXISTS workouts(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        day TEXT NOT NULL,
+        exercise_name TEXT NOT NULL,
+        sets INTEGER,
+        reps TEXT,
+        notes TEXT,
+        exercise_order INTEGER
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS workout_history(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        day TEXT NOT NULL,
+        exercises_completed INTEGER,
+        duration TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS exercise_completion(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        day TEXT NOT NULL,
+        exercise_index INTEGER,
+        completed BOOLEAN,
+        date TEXT
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS core_exercises(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        exercise_name TEXT NOT NULL,
+        exercise_order INTEGER
+    )""")
+    # NEW: user profile
+    c.execute("""CREATE TABLE IF NOT EXISTS user_profile(
+        id INTEGER PRIMARY KEY CHECK (id=1),
+        name TEXT,
+        units TEXT,
+        height_cm REAL,
+        weight_kg REAL,
+        goal TEXT,
+        theme TEXT,
+        created_at TEXT,
+        updated_at TEXT
+    )""")
     conn.commit()
-
-    # Check if workouts exist, if not, populate with default
+    # seed defaults
     c.execute("SELECT COUNT(*) FROM workouts")
     if c.fetchone()[0] == 0:
         populate_default_workouts(conn)
-
-    # Check if core exercises exist, if not, populate with default
     c.execute("SELECT COUNT(*) FROM core_exercises")
     if c.fetchone()[0] == 0:
         populate_default_core_exercises(conn)
-
     conn.close()
 
 def populate_default_workouts(conn):
-    """Populate database with default workouts"""
-    default_workouts = {
-        "dayA": [
-            ("Dynamic Warm-up", 1, "5-8 min", "Light cardio and dynamic stretching"),
-            ("Seated Machine Chest Press", 3, "10-12", "Control the weight, full range of motion"),
-            ("Chest-Supported Cable Row", 3, "10-12", "Squeeze shoulder blades, controlled movement"),
-            ("Reverse Lunges", 3, "10-12 each", "Step back, keep front knee over ankle"),
-            ("Seated Calf Raise", 2, "12-15", "Full range of motion, pause at top"),
-            ("Seated Machine Shoulder Press", 3, "10-12", "Press straight up, controlled descent"),
-            ("Wall Sit", 3, "30-45 sec", "Back flat against wall, thighs parallel"),
-            ("Pallof Press", 2, "10 each", "Resist rotation, engage core"),
-            ("Cool-down Stretching", 1, "5-10 min", "Focus on major muscle groups")
+    default = {
+        "dayA":[
+            ("Dynamic Warm-up",1,"5-8 min","Light cardio + mobility"),
+            ("Seated Machine Chest Press",3,"10-12","Smooth tempo"),
+            ("Chest-Supported Cable Row",3,"10-12","Squeeze back"),
+            ("Reverse Lunges",3,"10-12 each","Upright torso"),
+            ("Seated Calf Raise",2,"12-15","Pause at top"),
+            ("Seated Machine Shoulder Press",3,"10-12","Full ROM"),
+            ("Wall Sit",3,"30-45s","Flat back"),
+            ("Pallof Press",2,"10 each","Resist rotation"),
+            ("Cool-down",1,"5-10 min","Stretch major groups")
         ],
-        "dayB": [
-            ("Movement Prep", 1, "5-8 min", "Joint mobility and activation"),
-            ("Seated Dumbbell Press", 3, "10-12", "Controlled movement, full range"),
-            ("Machine Lat Pulldown", 3, "10-12", "Pull to chest, squeeze lats"),
-            ("Forward Lunges", 3, "10-12 each", "Step forward, return to start"),
-            ("Hip Adduction Machine", 2, "12-15", "Controlled squeeze, pause at end"),
-            ("Seated Lateral Raise", 2, "12-15", "Raise to shoulder height, control down"),
-            ("Face Pull", 2, "12-15", "Pull to face level, external rotation"),
-            ("Triceps Pushdown", 2, "12-15", "Keep elbows at sides, full extension"),
-            ("Seated Bicep Curl", 2, "12-15", "Controlled curl, squeeze at top"),
-            ("Modified Plank", 2, "30-45 sec", "Hold position, breathe steadily")
+        "dayB":[
+            ("Movement Prep",1,"5-8 min","Mobility + activation"),
+            ("Seated Dumbbell Press",3,"10-12","Controlled"),
+            ("Machine Lat Pulldown",3,"10-12","To chest"),
+            ("Forward Lunges",3,"10-12 each","Stable knee"),
+            ("Hip Adduction Machine",2,"12-15","Pause"),
+            ("Seated Lateral Raise",2,"12-15","To shoulder"),
+            ("Face Pull",2,"12-15","ER and scap"),
+            ("Triceps Pushdown",2,"12-15","Lockout"),
+            ("Seated Bicep Curl",2,"12-15","No swing"),
+            ("Modified Plank",2,"30-45s","Neutral spine")
         ],
-        "dayC": [
-            ("Gentle Movement", 1, "5-8 min", "Light walking or easy movement"),
-            ("Pec Deck Machine", 3, "12-15", "Smooth arc, squeeze chest"),
-            ("Seated Cable Row", 3, "10-12", "Pull to torso, maintain posture"),
-            ("Lateral Lunges", 3, "10-12 each", "Step to side, push back to center"),
-            ("Standing Calf Raise", 2, "15-20", "Rise up on toes, controlled descent"),
-            ("Seated Cable Fly", 3, "12-15", "Wide arc motion, control the weight"),
-            ("Reverse Pec Deck", 2, "12-15", "Squeeze shoulder blades together"),
-            ("Curtsy Lunges", 3, "10-12 each", "Step behind and across, alternate sides"),
-            ("Seated Knee Raises", 2, "10-12", "Lift knees toward chest"),
-            ("Mobility Flow", 1, "10 min", "Full body stretching sequence")
+        "dayC":[
+            ("Gentle Movement",1,"5-8 min","Walk or easy cardio"),
+            ("Pec Deck Machine",3,"12-15","Smooth arc"),
+            ("Seated Cable Row",3,"10-12","Posture"),
+            ("Lateral Lunges",3,"10-12 each","Sit back"),
+            ("Standing Calf Raise",2,"15-20","Controlled"),
+            ("Seated Cable Fly",3,"12-15","Wide arc"),
+            ("Reverse Pec Deck",2,"12-15","Scaps"),
+            ("Curtsy Lunges",3,"10-12 each","Control"),
+            ("Seated Knee Raises",2,"10-12","Core tight"),
+            ("Mobility Flow",1,"10 min","Full body")
         ]
     }
-
     c = conn.cursor()
-    for day, exercises in default_workouts.items():
-        for i, (name, sets, reps, notes) in enumerate(exercises):
-            c.execute("INSERT INTO workouts (day, exercise_name, sets, reps, notes, exercise_order) VALUES (?, ?, ?, ?, ?, ?)",
-                     (day, name, sets, reps, notes, i))
+    for day, exs in default.items():
+        for i,(n,s,r,notes) in enumerate(exs):
+            c.execute("INSERT INTO workouts(day,exercise_name,sets,reps,notes,exercise_order) VALUES(?,?,?,?,?,?)",
+                      (day,n,s,r,notes,i))
     conn.commit()
 
 def populate_default_core_exercises(conn):
-    """Populate database with default core exercises"""
-    default_core_exercises = [
-        "Bird-Dogs",
-        "Plank",
-        "Right Side Plank", 
-        "Left Side Plank"
-    ]
-    
+    core = ["Bird-Dogs","Plank","Right Side Plank","Left Side Plank"]
     c = conn.cursor()
-    for i, exercise in enumerate(default_core_exercises):
-        c.execute("INSERT INTO core_exercises (exercise_name, exercise_order) VALUES (?, ?)",
-                 (exercise, i))
+    for i, name in enumerate(core):
+        c.execute("INSERT INTO core_exercises(exercise_name,exercise_order) VALUES(?,?)",(name,i))
     conn.commit()
 
-# All the database functions remain the same
+# CRUD helpers
 def get_workouts(day):
-    conn = sqlite3.connect('fittrack.db')
-    df = pd.read_sql_query(
-        "SELECT * FROM workouts WHERE day = ? ORDER BY exercise_order",
-        conn, params=(day,)
-    )
+    conn = db_conn()
+    df = pd.read_sql_query("SELECT * FROM workouts WHERE day=? ORDER BY exercise_order", conn, params=(day,))
     conn.close()
     return df
 
 def get_core_exercises():
-    conn = sqlite3.connect('fittrack.db')
-    df = pd.read_sql_query(
-        "SELECT * FROM core_exercises ORDER BY exercise_order",
-        conn
-    )
+    conn = db_conn()
+    df = pd.read_sql_query("SELECT * FROM core_exercises ORDER BY exercise_order", conn)
     conn.close()
     return df
 
-def add_core_exercise(exercise_name):
-    conn = sqlite3.connect('fittrack.db')
+def add_core_exercise(name):
+    conn = db_conn()
     c = conn.cursor()
     c.execute("SELECT MAX(exercise_order) FROM core_exercises")
-    max_order = c.fetchone()[0] or -1
-    c.execute("INSERT INTO core_exercises (exercise_name, exercise_order) VALUES (?, ?)",
-              (exercise_name, max_order + 1))
-    conn.commit()
-    conn.close()
+    maxo = c.fetchone()[0] or -1
+    c.execute("INSERT INTO core_exercises(exercise_name,exercise_order) VALUES(?,?)", (name, maxo+1))
+    conn.commit(); conn.close()
 
-def delete_core_exercise(exercise_id):
-    conn = sqlite3.connect('fittrack.db')
-    c = conn.cursor()
-    c.execute("DELETE FROM core_exercises WHERE id = ?", (exercise_id,))
-    conn.commit()
-    conn.close()
+def delete_core_exercise(eid):
+    conn = db_conn(); conn.execute("DELETE FROM core_exercises WHERE id=?", (eid,)); conn.commit(); conn.close()
 
 def get_completion_status(day):
-    conn = sqlite3.connect('fittrack.db')
+    conn = db_conn()
     today = datetime.now().strftime("%Y-%m-%d")
-    df = pd.read_sql_query(
-        "SELECT exercise_index, completed FROM exercise_completion WHERE day = ? AND date = ?",
-        conn, params=(day, today)
-    )
+    df = pd.read_sql_query("SELECT exercise_index,completed FROM exercise_completion WHERE day=? AND date=?",
+                           conn, params=(day,today))
     conn.close()
-    return {row['exercise_index']: row['completed'] for _, row in df.iterrows()}
+    return {int(r['exercise_index']): bool(r['completed']) for _,r in df.iterrows()}
 
-def toggle_exercise_completion(day, exercise_index, completed):
-    conn = sqlite3.connect('fittrack.db')
-    c = conn.cursor()
+def toggle_exercise_completion(day, idx, completed):
+    conn = db_conn(); c=conn.cursor()
     today = datetime.now().strftime("%Y-%m-%d")
-    c.execute("SELECT id FROM exercise_completion WHERE day = ? AND exercise_index = ? AND date = ?",
-              (day, exercise_index, today))
-    result = c.fetchone()
-    if result:
-        c.execute("UPDATE exercise_completion SET completed = ? WHERE id = ?",
-                 (completed, result[0]))
-    else:
-        c.execute("INSERT INTO exercise_completion (day, exercise_index, completed, date) VALUES (?, ?, ?, ?)",
-                 (day, exercise_index, completed, today))
-    conn.commit()
-    conn.close()
+    c.execute("SELECT id FROM exercise_completion WHERE day=? AND exercise_index=? AND date=?",(day,idx,today))
+    row = c.fetchone()
+    if row: c.execute("UPDATE exercise_completion SET completed=? WHERE id=?", (completed,row[0]))
+    else:   c.execute("INSERT INTO exercise_completion(day,exercise_index,completed,date) VALUES(?,?,?,?)",
+                      (day,idx,completed,today))
+    conn.commit(); conn.close()
 
-def log_workout(day, exercises_completed, duration):
-    conn = sqlite3.connect('fittrack.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO workout_history (date, day, exercises_completed, duration) VALUES (?, ?, ?, ?)",
-              (datetime.now().strftime("%Y-%m-%d"), day, exercises_completed, duration))
-    conn.commit()
-    conn.close()
+def log_workout(day, done, duration):
+    conn = db_conn()
+    conn.execute("INSERT INTO workout_history(date,day,exercises_completed,duration) VALUES(?,?,?,?)",
+                 (datetime.now().strftime("%Y-%m-%d"),day,done,duration))
+    conn.commit(); conn.close()
 
 def get_workout_history(limit=100):
-    conn = sqlite3.connect('fittrack.db')
-    df = pd.read_sql_query(
-        "SELECT * FROM workout_history ORDER BY timestamp DESC LIMIT ?",
-        conn, params=(limit,)
-    )
+    conn = db_conn()
+    df = pd.read_sql_query("SELECT * FROM workout_history ORDER BY timestamp DESC LIMIT ?", conn, params=(limit,))
     conn.close()
     return df
 
 def get_stats():
-    conn = sqlite3.connect('fittrack.db')
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM workout_history")
-    total = c.fetchone()[0]
-    week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-    c.execute("SELECT COUNT(*) FROM workout_history WHERE date >= ?", (week_ago,))
-    this_week = c.fetchone()[0]
-    c.execute("SELECT DISTINCT date FROM workout_history ORDER BY date DESC")
-    dates = [row[0] for row in c.fetchall()]
+    conn = db_conn(); c=conn.cursor()
+    c.execute("SELECT COUNT(*) FROM workout_history"); total = c.fetchone()[0]
+    week_ago = (datetime.now()-timedelta(days=7)).strftime("%Y-%m-%d")
+    c.execute("SELECT COUNT(*) FROM workout_history WHERE date>=?", (week_ago,)); this_week = c.fetchone()[0]
+    c.execute("SELECT DISTINCT date FROM workout_history ORDER BY date DESC"); dates = [d[0] for d in c.fetchall()]
     streak = 0
     if dates:
-        last_date = datetime.strptime(dates[0], "%Y-%m-%d").date()
-        if (datetime.now().date() - last_date).days <= 1:
+        last = datetime.strptime(dates[0], "%Y-%m-%d").date()
+        if (datetime.now().date()-last).days <= 1:
             streak = 1
-            for i in range(1, len(dates)):
-                workout_date = datetime.strptime(dates[i], "%Y-%m-%d").date()
-                if (last_date - workout_date).days == 1:
-                    streak += 1
-                    last_date = workout_date
-                else:
-                    break
+            for i in range(1,len(dates)):
+                d = datetime.strptime(dates[i], "%Y-%m-%d").date()
+                if (last-d).days == 1: streak+=1; last=d
+                else: break
     conn.close()
     return total, this_week, streak
 
-def add_exercise(day, name, sets, reps, notes):
-    conn = sqlite3.connect('fittrack.db')
-    c = conn.cursor()
-    c.execute("SELECT MAX(exercise_order) FROM workouts WHERE day = ?", (day,))
-    max_order = c.fetchone()[0] or -1
-    c.execute("INSERT INTO workouts (day, exercise_name, sets, reps, notes, exercise_order) VALUES (?, ?, ?, ?, ?, ?)",
-              (day, name, sets, reps, notes, max_order + 1))
-    conn.commit()
-    conn.close()
+def add_exercise(day,name,sets,reps,notes):
+    conn = db_conn(); c=conn.cursor()
+    c.execute("SELECT MAX(exercise_order) FROM workouts WHERE day=?", (day,))
+    maxo = c.fetchone()[0] or -1
+    c.execute("INSERT INTO workouts(day,exercise_name,sets,reps,notes,exercise_order) VALUES(?,?,?,?,?,?)",
+              (day,name,sets,reps,notes,maxo+1))
+    conn.commit(); conn.close()
 
-def delete_exercise(exercise_id):
-    conn = sqlite3.connect('fittrack.db')
-    c = conn.cursor()
-    c.execute("DELETE FROM workouts WHERE id = ?", (exercise_id,))
-    conn.commit()
-    conn.close()
+def delete_exercise(ex_id):
+    conn = db_conn(); conn.execute("DELETE FROM workouts WHERE id=?", (ex_id,)); conn.commit(); conn.close()
 
-def update_exercise_order(day, exercise_id, new_order):
-    conn = sqlite3.connect('fittrack.db')
-    c = conn.cursor()
-    c.execute("SELECT exercise_order FROM workouts WHERE id = ?", (exercise_id,))
-    current_order = c.fetchone()[0]
-    c.execute("SELECT id FROM workouts WHERE day = ? AND exercise_order = ?", (day, new_order))
-    swap_id = c.fetchone()
-    if swap_id:
-        c.execute("UPDATE workouts SET exercise_order = ? WHERE id = ?", (current_order, swap_id[0]))
-    c.execute("UPDATE workouts SET exercise_order = ? WHERE id = ?", (new_order, exercise_id))
-    conn.commit()
-    conn.close()
+def update_exercise_order(day, ex_id, new_order):
+    conn = db_conn(); c=conn.cursor()
+    c.execute("SELECT exercise_order FROM workouts WHERE id=?", (ex_id,))
+    cur = c.fetchone()[0]
+    c.execute("SELECT id FROM workouts WHERE day=? AND exercise_order=?", (day,new_order))
+    swap = c.fetchone()
+    if swap: c.execute("UPDATE workouts SET exercise_order=? WHERE id=?", (cur, swap[0]))
+    c.execute("UPDATE workouts SET exercise_order=? WHERE id=?", (new_order, ex_id))
+    conn.commit(); conn.close()
 
-def replace_exercise(exercise_id, new_name, new_notes=None):
-    conn = sqlite3.connect('fittrack.db')
-    c = conn.cursor()
-    if new_notes:
-        c.execute("UPDATE workouts SET exercise_name = ?, notes = ? WHERE id = ?",
-                 (new_name, new_notes, exercise_id))
+def replace_exercise(ex_id,new_name,new_notes=None):
+    conn=db_conn(); c=conn.cursor()
+    if new_notes is not None:
+        c.execute("UPDATE workouts SET exercise_name=?, notes=? WHERE id=?", (new_name,new_notes,ex_id))
     else:
-        c.execute("UPDATE workouts SET exercise_name = ? WHERE id = ?",
-                 (new_name, exercise_id))
-    conn.commit()
+        c.execute("UPDATE workouts SET exercise_name=? WHERE id=?", (new_name,ex_id))
+    conn.commit(); conn.close()
+
+def replace_exercise_manually(ex_id, name, sets, reps, notes):
+    conn=db_conn()
+    conn.execute("UPDATE workouts SET exercise_name=?, sets=?, reps=?, notes=? WHERE id=?",
+                 (name,sets,reps,notes,ex_id))
+    conn.commit(); conn.close()
+
+# Profile
+def load_profile():
+    conn = db_conn()
+    df = pd.read_sql_query("SELECT * FROM user_profile WHERE id=1", conn)
     conn.close()
+    return df.iloc[0].to_dict() if not df.empty else None
 
-def replace_exercise_manually(exercise_id, new_name, new_sets, new_reps, new_notes):
-    conn = sqlite3.connect('fittrack.db')
-    c = conn.cursor()
-    c.execute("UPDATE workouts SET exercise_name = ?, sets = ?, reps = ?, notes = ? WHERE id = ?",
-              (new_name, new_sets, new_reps, new_notes, exercise_id))
-    conn.commit()
-    conn.close()
+def save_profile(data: dict):
+    now = datetime.now().isoformat(timespec='seconds')
+    conn = db_conn(); c=conn.cursor()
+    c.execute("SELECT id FROM user_profile WHERE id=1")
+    if c.fetchone():
+        c.execute("""UPDATE user_profile SET name=?, units=?, height_cm=?, weight_kg=?, goal=?, theme=?, updated_at=? WHERE id=1""",
+                  (data.get('name'), data.get('units'), data.get('height_cm'), data.get('weight_kg'),
+                   data.get('goal'), data.get('theme'), now))
+    else:
+        c.execute("""INSERT INTO user_profile(id,name,units,height_cm,weight_kg,goal,theme,created_at,updated_at)
+                     VALUES(1,?,?,?,?,?,?,?,?)""",
+                  (data.get('name'), data.get('units'), data.get('height_cm'), data.get('weight_kg'),
+                   data.get('goal'), data.get('theme'), now, now))
+    conn.commit(); conn.close()
 
-# Enhanced timer persistence function
-def get_actual_elapsed_time(timer_key, start_time_key):
-    """Calculate actual elapsed time accounting for app suspension"""
-    if timer_key not in st.session_state or not st.session_state[timer_key]:
-        return 0
-    
-    if start_time_key not in st.session_state:
-        return 0
-    
-    # Calculate time based on stored start time
-    current_time = time.time()
-    start_time = st.session_state[start_time_key]
-    return current_time - start_time
-
-# Initialize Streamlit
-st.set_page_config(
-    page_title="FitTrack Pro",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Clean, professional CSS
-st.markdown("""
-<style>
-    /* Clean, professional styling */
-    .main { 
-        padding: 1rem 2rem; 
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    }
-    
-    .stButton > button {
-        width: 100%;
-        border-radius: 8px;
-        height: 3rem;
-        font-weight: 500;
-        border: 1px solid #d1d5db;
-        background: white;
-        color: #374151;
-        transition: all 0.2s;
-    }
-    
-    .stButton > button:hover {
-        background: #f9fafb;
-        border-color: #9ca3af;
-    }
-    
-    .workout-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 8px;
-        margin-bottom: 1rem;
-        border: 1px solid #e5e7eb;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    }
-    
-    .completed-card {
-        background: #f0fdf4;
-        border-color: #22c55e;
-    }
-    
-    .timer-display {
-        font-size: 3rem;
-        font-weight: 600;
-        text-align: center;
-        color: #111827;
-        font-family: -apple-system, BlinkMacSystemFont, monospace;
-        padding: 2rem;
-        background: #f9fafb;
-        border-radius: 8px;
-        margin: 1rem 0;
-        border: 1px solid #e5e7eb;
-    }
-    
-    .interval-timer-display {
-        font-size: 4rem;
-        font-weight: 600;
-        text-align: center;
-        color: #111827;
-        font-family: -apple-system, BlinkMacSystemFont, monospace;
-        padding: 2rem;
-        background: #f9fafb;
-        border-radius: 8px;
-        margin: 1rem 0;
-        border: 2px solid #3b82f6;
-    }
-    
-    .work-timer {
-        background: #ecfdf5;
-        border-color: #10b981;
-        color: #059669;
-    }
-    
-    .rest-timer {
-        background: #fef3c7;
-        border-color: #f59e0b;
-        color: #d97706;
-    }
-    
-    .interval-exercise {
-        font-size: 1.5rem;
-        font-weight: 500;
-        text-align: center;
-        color: #374151;
-        margin-bottom: 1rem;
-        padding: 1rem;
-        background: #f3f4f6;
-        border-radius: 8px;
-        border: 1px solid #d1d5db;
-    }
-    
-    .interval-status {
-        font-size: 1.25rem;
-        font-weight: 500;
-        text-align: center;
-        margin-bottom: 1rem;
-        padding: 0.75rem;
-        border-radius: 8px;
-        border: 1px solid #d1d5db;
-    }
-    
-    .work-status {
-        background: #ecfdf5;
-        color: #059669;
-        border-color: #10b981;
-    }
-    
-    .rest-status {
-        background: #fef3c7;
-        color: #d97706;
-        border-color: #f59e0b;
-    }
-    
-    .stat-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 8px;
-        text-align: center;
-        border: 1px solid #e5e7eb;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-        height: 100%;
-    }
-    
-    .stat-value {
-        font-size: 2.5rem;
-        font-weight: 600;
-        color: #3b82f6;
-        margin-bottom: 0.5rem;
-    }
-    
-    .stat-label {
-        font-weight: 500;
-        color: #6b7280;
-    }
-    
-    .exercise-db-card {
-        background: white;
-        padding: 1rem;
-        border-radius: 8px;
-        margin-bottom: 0.5rem;
-        border: 1px solid #e5e7eb;
-        transition: all 0.2s;
-    }
-    
-    .exercise-db-card:hover {
-        background: #f9fafb;
-        border-color: #d1d5db;
-    }
-    
-    .calendar-day {
-        padding: 0.5rem;
-        text-align: center;
-        border-radius: 4px;
-        height: 3rem;
-        line-height: 2rem;
-        box-sizing: border-box;
-        border: 1px solid #e5e7eb;
-        background: white;
-    }
-    
-    .calendar-day.today {
-        font-weight: 600;
-        background: #eff6ff;
-        border-color: #3b82f6;
-        color: #1d4ed8;
-    }
-    
-    .calendar-day.workout-day {
-        font-weight: 600;
-        background: #ecfdf5;
-        border-color: #10b981;
-        color: #059669;
-    }
-    
-    .music-button {
-        display: inline-block;
-        padding: 0.75rem 1.5rem;
-        background: #000;
-        color: white;
-        text-decoration: none;
-        border-radius: 8px;
-        font-weight: 500;
-        text-align: center;
-        transition: all 0.2s;
-        border: none;
-        cursor: pointer;
-        width: 100%;
-    }
-    
-    .music-button:hover {
-        background: #1f2937;
-        text-decoration: none;
-        color: white;
-    }
-    
-    .warning-box {
-        background: #fef3c7;
-        border: 1px solid #f59e0b;
-        border-radius: 8px;
-        padding: 1rem;
-        margin: 1rem 0;
-    }
-</style>
-
-<script>
-// Fixed Audio System - Simple and reliable
-class SimpleAudioSystem {
-    constructor() {
-        this.audioContext = null;
-        this.isInitialized = false;
-    }
-    
-    async init() {
-        if (this.isInitialized) return true;
-        
-        try {
-            // Try to create audio context
-            const AudioContext = window.AudioContext || window.webkitAudioContext;
-            if (AudioContext) {
-                this.audioContext = new AudioContext();
-                
-                // Handle suspended state (iOS requirement)
-                if (this.audioContext.state === 'suspended') {
-                    await this.audioContext.resume();
-                }
-                
-                this.isInitialized = true;
-                console.log('Audio system initialized');
-                return true;
-            }
-        } catch (e) {
-            console.log('Web Audio not available, using fallback');
-        }
-        
-        this.isInitialized = true;
-        return false;
-    }
-    
-    async playSound(type) {
-        console.log(`Playing ${type} sound`);
-        
-        // Initialize if needed
-        if (!this.isInitialized) {
-            await this.init();
-        }
-        
-        // Try Web Audio API first
-        if (this.audioContext && this.audioContext.state === 'running') {
-            try {
-                this.playWebAudio(type);
-                return;
-            } catch (e) {
-                console.log('Web Audio failed, using fallback');
-            }
-        }
-        
-        // Fallback to simple beep
-        this.playFallbackSound(type);
-    }
-    
-    playWebAudio(type) {
-        const frequencies = {
-            countdown: 800,
-            transition: 1000,
-            completion: 1200,
-            timer: 900
-        };
-        
-        const duration = type === 'completion' ? 0.4 : 0.2;
-        const freq = frequencies[type] || 800;
-        
-        const oscillator = this.audioContext.createOscillator();
-        const gainNode = this.audioContext.createGain();
-        
-        oscillator.connect(gainNode);
-        gainNode.connect(this.audioContext.destination);
-        
-        oscillator.frequency.setValueAtTime(freq, this.audioContext.currentTime);
-        oscillator.type = 'sine';
-        
-        // Envelope
-        gainNode.gain.setValueAtTime(0, this.audioContext.currentTime);
-        gainNode.gain.linearRampToValueAtTime(0.3, this.audioContext.currentTime + 0.01);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + duration);
-        
-        oscillator.start(this.audioContext.currentTime);
-        oscillator.stop(this.audioContext.currentTime + duration);
-        
-        // Multiple beeps for completion
-        if (type === 'completion') {
-            setTimeout(() => this.playWebAudio('completion'), 300);
-        }
-    }
-    
-    playFallbackSound(type) {
-        // Try vibration on mobile
-        if ('vibrate' in navigator) {
-            const patterns = {
-                countdown: [100],
-                transition: [200],
-                completion: [100, 100, 100],
-                timer: [150]
-            };
-            navigator.vibrate(patterns[type] || [100]);
-        }
-        
-        // Visual feedback
-        document.body.style.backgroundColor = '#f3f4f6';
-        setTimeout(() => {
-            document.body.style.backgroundColor = '';
-        }, 100);
-    }
-}
-
-// Apple Music Integration - Fixed to actually work
-function openAppleMusic() {
-    console.log('Opening Apple Music...');
-    
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    const isMac = navigator.platform.indexOf('Mac') > -1;
-    
-    if (isIOS) {
-        // For iOS - try multiple URL schemes
-        const schemes = ['music://', 'musics://', 'itms-music://', 'apple-music://'];
-        
-        // Try each scheme
-        let attempted = false;
-        schemes.forEach((scheme, index) => {
-            setTimeout(() => {
-                try {
-                    window.location.href = scheme;
-                    console.log(`Tried scheme: ${scheme}`);
-                } catch (e) {
-                    console.log(`Scheme ${scheme} failed:`, e);
-                }
-            }, index * 500);
-        });
-        
-        // Fallback to App Store or web after 3 seconds
-        setTimeout(() => {
-            window.open('https://apps.apple.com/app/apple-music/id1108187390', '_blank');
-        }, 3000);
-        
-    } else if (isMac) {
-        // For Mac - try to open Music app
-        try {
-            window.location.href = 'music://';
-        } catch (e) {
-            window.open('https://music.apple.com', '_blank');
-        }
-    } else {
-        // Other platforms - open web version
-        window.open('https://music.apple.com', '_blank');
-    }
-}
-
-// Wake Lock for keeping screen on
-async function requestWakeLock() {
-    try {
-        if ('wakeLock' in navigator) {
-            const wakeLock = await navigator.wakeLock.request('screen');
-            console.log('Screen wake lock active');
-            return wakeLock;
-        }
-    } catch (err) {
-        console.log('Wake lock not supported or failed');
-    }
-    return null;
-}
-
-// Initialize audio system
-const audioSystem = new SimpleAudioSystem();
-
-// Auto-initialize on any user interaction
-document.addEventListener('click', () => audioSystem.init(), { once: true });
-document.addEventListener('touchstart', () => audioSystem.init(), { once: true });
-
-// Global functions for Streamlit
-window.playCountdownBeep = () => audioSystem.playSound('countdown');
-window.playTransitionBeep = () => audioSystem.playSound('transition');
-window.playTimerBeep = () => audioSystem.playSound('timer');
-window.playCompletionBeep = () => audioSystem.playSound('completion');
-window.openAppleMusic = openAppleMusic;
-window.requestWakeLock = requestWakeLock;
-
-console.log('FitTrack Pro audio and music systems loaded');
-</script>
-""", unsafe_allow_html=True)
-
-# Initialize database
-init_database()
-
-# Load exercise database
-@st.cache_data
+# =========================
+# EXERCISE DB LOADING
+# =========================
+@st.cache_data(show_spinner=False)
 def load_exercise_database():
-    csv_path = Path('megaGymDataset.csv')
-    if csv_path.exists():
+    path = EXERCISE_CSV_PRIMARY if EXERCISE_CSV_PRIMARY.exists() else EXERCISE_CSV_FALLBACK
+    if path.exists():
         try:
-            df = pd.read_csv(csv_path)
-            if 'Unnamed: 0' in df.columns:
-                df = df.drop(columns=['Unnamed: 0'])
-            return df, True
+            df = pd.read_csv(path)
+            if 'Unnamed: 0' in df.columns: df = df.drop(columns=['Unnamed: 0'])
+            # Normalize expected columns
+            rename_map = {c:c for c in df.columns}
+            # Make sure we have these logical names:
+            for need in ['Title','BodyPart','Equipment','Level','Type']:
+                if need not in df.columns:
+                    # try best-effort mapping
+                    for c in df.columns:
+                        if need.lower() in c.lower():
+                            rename_map[c] = need
+            df = df.rename(columns=rename_map)
+            for need in ['Title','BodyPart','Equipment','Level','Type']:
+                if need not in df.columns:
+                    df[need] = None
+            return df, True, str(path)
         except Exception as e:
             st.error(f"Error loading exercise database: {e}")
-            return pd.DataFrame(), False
+            return pd.DataFrame(), False, str(path)
+    # tiny default
+    return pd.DataFrame({
+        'Title':['Push-ups','Squats','Plank','Lunges','Burpees'],
+        'BodyPart':['Chest','Legs','Core','Legs','Full Body'],
+        'Equipment':['Body Only']*5,
+        'Level':['Beginner','Beginner','Beginner','Beginner','Intermediate'],
+        'Type':['Strength']*4+['Cardio']
+    }), False, "DEFAULT"
+exercise_db, db_loaded, db_path_used = load_exercise_database()
+
+# =========================
+# TIMER UTILS (no freeze; use epoch math)
+# =========================
+def init_timer_state():
+    ss = st.session_state
+    for k,v in {
+        'timer_running':False,'timer_start_ts':None,'timer_elapsed':0.0,'timer_preset':'Stopwatch','timer_beep_last':-1,
+        'wo_running':False,'wo_start_ts':None,'wo_elapsed':0.0,
+        'int_running':False,'int_start_ts':None,'int_elapsed':0.0,'int_set':1,'int_phase':'WORK','int_idx':0,
+        'int_done':False,'int_beep_last':-1
+    }.items():
+        if k not in ss: ss[k]=v
+
+def fmt_time(sec: float)->str:
+    sec = max(0,int(sec))
+    return f"{sec//60:02d}:{sec%60:02d}"
+
+def actual_elapsed(flag_key, start_key):
+    ss = st.session_state
+    if not ss.get(flag_key) or ss.get(start_key) is None: return 0.0
+    return time.time() - float(ss[start_key])
+
+def play_sound(kind:str):
+    st.components.v1.html(f"""
+    <script>(async()=>{{try{{await window.__fitAudio.play('{kind}')}}catch(e){{console.log(e)}}}})();</script>
+    """, height=0)
+
+# =========================
+# PAGES
+# =========================
+def page_workout():
+    st.subheader("Timers")
+    colA,colB = st.columns(2, gap="large")
+    with colA:
+        with st.container(border=True):
+            st.markdown("#### Countdown / Stopwatch")
+            presets = {"Stopwatch":0,"30s":30,"45s":45,"1min":60,"90s":90,"2min":120,"3min":180,"5min":300}
+            sel = st.selectbox("Preset", list(presets.keys()), index=list(presets.keys()).index(st.session_state.timer_preset))
+            if sel != st.session_state.timer_preset:
+                st.session_state.timer_preset = sel
+                st.session_state.timer_elapsed = 0.0
+                st.session_state.timer_running = False
+                st.session_state.timer_beep_last = -1
+            c1,c2,c3 = st.columns(3)
+            with c1:
+                if st.button("Start", use_container_width=True, key="t_start", disabled=st.session_state.timer_running):
+                    st.session_state.timer_running = True
+                    st.session_state.timer_start_ts = time.time() - st.session_state.timer_elapsed
+                    st.components.v1.html("<script>window.requestWakeLock && window.requestWakeLock();</script>", height=0)
+                    st.rerun()
+            with c2:
+                if st.button("Pause", use_container_width=True, key="t_pause", disabled=not st.session_state.timer_running):
+                    st.session_state.timer_running = False
+                    st.session_state.timer_elapsed = actual_elapsed('timer_running','timer_start_ts')
+                    st.rerun()
+            with c3:
+                if st.button("Reset", use_container_width=True, key="t_reset"):
+                    st.session_state.timer_running = False
+                    st.session_state.timer_elapsed = 0.0
+                    st.session_state.timer_beep_last = -1
+                    st.rerun()
+            # display
+            if st.session_state.timer_running:
+                el = actual_elapsed('timer_running','timer_start_ts')
+                st.session_state.timer_elapsed = el
+                if sel!="Stopwatch":
+                    remaining = presets[sel] - el
+                    if remaining <= 0:
+                        st.session_state.timer_running=False
+                        st.markdown(f"<div class='timer'>00:00</div>", unsafe_allow_html=True)
+                        play_sound("timer")
+                    else:
+                        st.markdown(f"<div class='timer'>{fmt_time(remaining)}</div>", unsafe_allow_html=True)
+                        remain_int = int(remaining)
+                        if 0<remain_int<=10 and remain_int!=st.session_state.timer_beep_last:
+                            play_sound("countdown"); st.session_state.timer_beep_last = remain_int
+                        if remain_int==0 and st.session_state.timer_beep_last!=0:
+                            play_sound("timer"); st.session_state.timer_beep_last=0
+                        time.sleep(0.1); st.rerun()
+                else:
+                    st.markdown(f"<div class='timer'>{fmt_time(el)}</div>", unsafe_allow_html=True)
+                    time.sleep(0.1); st.rerun()
+            else:
+                if sel!="Stopwatch" and st.session_state.timer_elapsed==0:
+                    st.markdown(f"<div class='timer'>{fmt_time(presets[sel])}</div>", unsafe_allow_html=True)
+                else:
+                    disp = st.session_state.timer_elapsed if sel=="Stopwatch" else max(0,presets[sel]-st.session_state.timer_elapsed)
+                    st.markdown(f"<div class='timer'>{fmt_time(disp)}</div>", unsafe_allow_html=True)
+
+    with colB:
+        with st.container(border=True):
+            st.markdown("#### Workout Stopwatch")
+            c1,c2,c3 = st.columns(3)
+            with c1:
+                if st.button("Start", use_container_width=True, key="wo_start", disabled=st.session_state.wo_running):
+                    st.session_state.wo_running=True
+                    st.session_state.wo_start_ts = time.time() - st.session_state.wo_elapsed
+                    st.components.v1.html("<script>window.requestWakeLock && window.requestWakeLock();</script>", height=0)
+                    st.rerun()
+            with c2:
+                if st.button("Pause", use_container_width=True, key="wo_pause", disabled=not st.session_state.wo_running):
+                    st.session_state.wo_running=False
+                    st.session_state.wo_elapsed = actual_elapsed('wo_running','wo_start_ts')
+                    st.rerun()
+            with c3:
+                if st.button("Reset", use_container_width=True, key="wo_reset"):
+                    st.session_state.wo_running=False; st.session_state.wo_elapsed=0.0; st.rerun()
+            if st.session_state.wo_running:
+                el = actual_elapsed('wo_running','wo_start_ts')
+                st.session_state.wo_elapsed = el
+                st.markdown(f"<div class='timer'>{fmt_time(el)}</div>", unsafe_allow_html=True)
+                time.sleep(0.1); st.rerun()
+            else:
+                st.markdown(f"<div class='timer'>{fmt_time(st.session_state.wo_elapsed)}</div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # Workout Flow
+    st.markdown("### Today’s Workout")
+    day = st.selectbox("Select Plan", ["dayA","dayB","dayC"], format_func=lambda x: {"dayA":"Day A — Full Body","dayB":"Day B — Strength","dayC":"Day C — Mobility"}[x])
+    workouts = get_workouts(day)
+    completion = get_completion_status(day)
+    done = sum(1 for i in range(len(workouts)) if completion.get(i, False))
+    pct = int(100 * (done/len(workouts) if len(workouts)>0 else 0))
+    st.markdown("<div class='progress-wrap'><div class='progress-bar' style='width:%d%%'></div></div>"%pct, unsafe_allow_html=True)
+    st.caption(f"**{pct}% Complete** — {done} / {len(workouts)}")
+
+    for idx, row in workouts.iterrows():
+        comp = completion.get(idx, False)
+        with st.container():
+            st.markdown(f"<div class='exercise {'done' if comp else ''}'>", unsafe_allow_html=True)
+            c1,c2 = st.columns([3,1])
+            with c1:
+                st.markdown(f"**{row['exercise_name']}**  \n{row['sets']} × {row['reps']}  \n<span class='small'>{row['notes']}</span>", unsafe_allow_html=True)
+            with c2:
+                colx, coly = st.columns(2)
+                with colx:
+                    if st.button("Done" if not comp else "Undo", key=f"ex_done_{day}_{idx}"):
+                        toggle_exercise_completion(day, idx, not comp); st.rerun()
+                with coly:
+                    if st.button("Reset", key=f"ex_reset_{day}_{idx}"):
+                        toggle_exercise_completion(day, idx, False); st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    if len(workouts)>0 and done==len(workouts):
+        st.success("Workout Complete! Logging and celebrating 🎉")
+        play_sound("completion")
+        if st.button("Log Workout & Reset"):
+            dur = fmt_time(st.session_state.wo_elapsed)
+            log_workout(day, len(workouts), dur)
+            # clear today's completion for next time (optional)
+            conn=db_conn(); today=datetime.now().strftime("%Y-%m-%d")
+            conn.execute("DELETE FROM exercise_completion WHERE day=? AND date=?", (day,today))
+            conn.commit(); conn.close()
+            st.session_state.wo_elapsed=0; st.session_state.wo_running=False
+            st.rerun()
+
+def page_cardio_core():
+    st.markdown("### 20-Minute Cardio & Core")
+    st.caption("Light cardio (15) + Core intervals (5). Sounds fixed. Timers don’t freeze.")
+    core = get_core_exercises()
+    exercise_list = core['exercise_name'].tolist()
+    if not exercise_list:
+        st.error("No core exercises saved. Add some in **Edit**."); return
+
+    st.markdown("#### Audio test")
+    c1,c2,c3 = st.columns(3)
+    with c1:
+        if st.button("Countdown beep"): play_sound("countdown")
+    with c2:
+        if st.button("Transition beep"): play_sound("transition")
+    with c3:
+        if st.button("Completion beep"): play_sound("completion")
+
+    st.divider()
+    st.markdown("#### Intervals — 4× (60s work + 10s rest)")
+    # controls
+    a,b,c = st.columns(3)
+    with a:
+        if st.button("Start", key="int_start", disabled=st.session_state.int_running):
+            st.session_state.int_running=True
+            st.session_state.int_start_ts=time.time()
+            st.session_state.int_elapsed=0.0
+            st.session_state.int_set=1; st.session_state.int_phase="WORK"; st.session_state.int_idx=0
+            st.session_state.int_done=False; st.session_state.int_beep_last=-1
+            st.components.v1.html("<script>window.requestWakeLock && window.requestWakeLock();</script>", height=0)
+            st.rerun()
+    with b:
+        if st.button("Pause", key="int_pause", disabled=not st.session_state.int_running):
+            st.session_state.int_running=False
+            st.session_state.int_elapsed = actual_elapsed('int_running','int_start_ts')
+            st.rerun()
+    with c:
+        if st.button("Reset", key="int_reset"):
+            st.session_state.int_running=False; st.session_state.int_elapsed=0.0
+            st.session_state.int_set=1; st.session_state.int_phase="WORK"; st.session_state.int_idx=0
+            st.session_state.int_done=False; st.session_state.int_beep_last=-1
+            st.rerun()
+
+    if st.session_state.int_running and not st.session_state.int_done:
+        el = actual_elapsed('int_running','int_start_ts')
+        st.session_state.int_elapsed = el
+        total_work = 4*60; total_rest = 3*10; total = total_work + total_rest  # 310s
+        cycle = 70
+
+        if el < total:
+            # compute set/phase/remaining
+            which_cycle = int(el // cycle)
+            in_cycle_t = el - which_cycle*cycle
+            current_set = which_cycle + 1
+            if current_set>4: current_set=4
+            if in_cycle_t < 60:
+                phase = "WORK"
+                remaining = 60 - in_cycle_t
+                idx = which_cycle % max(1,len(exercise_list))
+            else:
+                phase = "REST"
+                remaining = 70 - in_cycle_t
+                idx = which_cycle % max(1,len(exercise_list))
+        else:
+            st.session_state.int_done=True; st.session_state.int_running=False
+            remaining = 0; phase="WORK"; current_set=4; idx=3
+
+        if not st.session_state.int_done:
+            st.session_state.int_set=current_set; st.session_state.int_phase=phase; st.session_state.int_idx=idx
+            badge = "ok" if phase=="WORK" else "warn"
+            st.markdown(f"<span class='badge {badge}'>Set {current_set}/4 — {phase}</span>", unsafe_allow_html=True)
+            if phase=="WORK":
+                st.markdown(f"**Current:** {exercise_list[idx]}")
+            cls = "work" if phase=="WORK" else "rest"
+            st.markdown(f"<div class='timer {cls}'>{fmt_time(remaining)}</div>", unsafe_allow_html=True)
+
+            remain_int = int(remaining)
+            if 0<remain_int<=10 and remain_int!=st.session_state.int_beep_last:
+                play_sound("countdown"); st.session_state.int_beep_last = remain_int
+            if remain_int==0 and st.session_state.int_beep_last!=0:
+                if current_set==4 and phase=="WORK": play_sound("completion")
+                else: play_sound("transition")
+                st.session_state.int_beep_last=0
+
+            time.sleep(0.1); st.rerun()
+    elif st.session_state.int_done:
+        st.success("Core intervals complete! Logged as Cardio & Core.")
+        st.markdown("<div class='timer'>DONE</div>", unsafe_allow_html=True)
+        if st.button("Log Workout"):
+            log_workout("Cardio & Core", 1, "20:00")
+            st.success("Logged."); st.rerun()
     else:
-        st.warning("megaGymDataset.csv not found. Using a minimal exercise database.")
-        return pd.DataFrame({
-            'Title': ['Push-ups', 'Squats', 'Plank', 'Lunges', 'Burpees'],
-            'BodyPart': ['Chest', 'Legs', 'Core', 'Legs', 'Full Body'],
-            'Equipment': ['Body Only', 'Body Only', 'Body Only', 'Body Only', 'Body Only'],
-            'Level': ['Beginner', 'Beginner', 'Beginner', 'Beginner', 'Intermediate'],
-            'Type': ['Strength', 'Strength', 'Strength', 'Strength', 'Cardio']
-        }), False
+        st.markdown("<span class='badge ok'>Ready — Set 1/4</span>", unsafe_allow_html=True)
+        st.markdown(f"**First up:** {exercise_list[0]}")
+        st.markdown("<div class='timer work'>01:00</div>", unsafe_allow_html=True)
 
-exercise_db, db_loaded = load_exercise_database()
+    st.divider()
+    st.markdown("#### Manage Core List")
+    for _,r in core.iterrows():
+        c1,c2 = st.columns([5,1])
+        with c1:
+            st.write(f"{r['exercise_order']+1}. {r['exercise_name']}")
+        with c2:
+            if st.button("Delete", key=f"del_core_{r['id']}"):
+                delete_core_exercise(r['id']); st.rerun()
 
-# Enhanced session state initialization with persistence timestamps
-if 'timer_running' not in st.session_state:
-    st.session_state.timer_running = False
-    st.session_state.timer_start_timestamp = None  # Actual timestamp for persistence
-    st.session_state.timer_elapsed = 0
-    st.session_state.timer_preset = "Stopwatch"
-    st.session_state.timer_last_beep_second = -1
+    st.markdown("**Add from DB**")
+    c1,c2,c3 = st.columns(3)
+    with c1:
+        bp = ["All"] + sorted(exercise_db['BodyPart'].dropna().unique().tolist())
+        sel_bp = st.selectbox("Body Part", bp, key="core_bp")
+    with c2:
+        eq = ["All"] + sorted(exercise_db['Equipment'].dropna().unique().tolist())
+        sel_eq = st.selectbox("Equipment", eq, key="core_eq")
+    with c3:
+        term = st.text_input("Search", key="core_term")
 
-if 'workout_timer_running' not in st.session_state:
-    st.session_state.workout_timer_running = False
-    st.session_state.workout_timer_start_timestamp = None
-    st.session_state.workout_timer_elapsed = 0
+    fdf = exercise_db.copy()
+    if sel_bp!="All": fdf = fdf[fdf['BodyPart']==sel_bp]
+    if sel_eq!="All": fdf = fdf[fdf['Equipment']==sel_eq]
+    if term: fdf = fdf[fdf['Title'].str.contains(term, case=False, na=False)]
+    st.caption(f"Found {len(fdf)}")
+    for _,ex in fdf.head(20).iterrows():
+        cc1,cc2 = st.columns([4,1])
+        with cc1:
+            st.markdown(f"**{ex.get('Title','(Unnamed)')}** — {ex.get('BodyPart','?')} | {ex.get('Equipment','?')} | {ex.get('Level','?')}")
+        with cc2:
+            if st.button("Add", key=f"core_add_{ex.name}"):
+                add_core_exercise(ex.get('Title','')); st.success("Added"); st.rerun()
 
-if 'interval_timer_running' not in st.session_state:
-    st.session_state.interval_timer_running = False
-    st.session_state.interval_timer_start_timestamp = None
-    st.session_state.interval_timer_elapsed = 0
-    st.session_state.current_set = 1
-    st.session_state.current_phase = "WORK"
-    st.session_state.current_exercise_index = 0
-    st.session_state.interval_completed = False
-    st.session_state.last_beep_second = -1
+    st.markdown("**Add custom**")
+    name = st.text_input("Exercise name", key="core_custom")
+    if st.button("Add Custom"):
+        if name.strip():
+            add_core_exercise(name.strip()); st.success("Added"); st.rerun()
 
-def format_time(seconds):
-    """Format seconds to MM:SS"""
-    minutes = int(seconds // 60)
-    secs = int(seconds % 60)
-    return f"{minutes:02d}:{secs:02d}"
+def page_browse_replace():
+    st.markdown("### Browse & Replace Exercises")
+    c1,c2 = st.columns([2,1])
+    with c1:
+        day = st.selectbox("Day", ["dayA","dayB","dayC"], format_func=lambda x: {"dayA":"Day A","dayB":"Day B","dayC":"Day C"}[x], key="br_day")
+    with c2:
+        w = get_workouts(day)
+        choice = st.selectbox("Exercise to replace",
+                              options=[(row['id'], row['exercise_name']) for _,row in w.iterrows()],
+                              format_func=lambda x: x[1] if isinstance(x,tuple) else x)
 
-def play_audio(audio_type):
-    """Play audio with fixed system"""
-    audio_script = f"""
-    <script>
-    (async function() {{
-        try {{
-            if (window.audioSystem) {{
-                await window.audioSystem.playSound('{audio_type}');
-            }} else {{
-                console.log('Audio system not ready');
-            }}
-        }} catch (error) {{
-            console.error('Audio playback failed:', error);
-        }}
-    }})();
-    </script>
-    """
-    st.components.v1.html(audio_script, height=0)
+    st.markdown("---")
+    c1,c2,c3 = st.columns(3)
+    with c1:
+        bp = ["All"] + sorted(exercise_db['BodyPart'].dropna().unique().tolist())
+        sel_bp = st.selectbox("Body Part", bp)
+    with c2:
+        eq = ["All"] + sorted(exercise_db['Equipment'].dropna().unique().tolist())
+        sel_eq = st.selectbox("Equipment", eq)
+    with c3:
+        term = st.text_input("Search")
 
-# Main App
-def main():
-    st.title("FitTrack Pro")
-    st.markdown("Your personal workout companion with persistent data storage")
+    fdf = exercise_db.copy()
+    if sel_bp!="All": fdf = fdf[fdf['BodyPart']==sel_bp]
+    if sel_eq!="All": fdf = fdf[fdf['Equipment']==sel_eq]
+    if term: fdf = fdf[fdf['Title'].str.contains(term, case=False, na=False)]
 
-    # Quick access section at the top
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        # Apple Music button - Fixed for iOS
-        if st.button("Open Apple Music", key="apple_music_btn"):
+    st.caption(f"Found {len(fdf)} (source: {db_path_used})")
+    for _,ex in fdf.head(50).iterrows():
+        d1,d2 = st.columns([4,1])
+        with d1:
+            st.markdown(f"**{ex.get('Title','?')}** — {ex.get('BodyPart','?')} | {ex.get('Equipment','?')} | {ex.get('Level','?')}")
+        with d2:
+            if st.button("Replace", key=f"rep_{ex.name}"):
+                notes = f"{ex.get('Type','Exercise')} — {ex.get('Level','All levels')}"
+                replace_exercise(choice[0], ex.get('Title',''), notes)
+                st.success(f"Replaced with '{ex.get('Title','')}'"); st.rerun()
+
+def page_edit():
+    st.markdown("### Edit Workouts")
+    day = st.selectbox("Day", ["dayA","dayB","dayC"], format_func=lambda x: {"dayA":"Day A","dayB":"Day B","dayC":"Day C"}[x])
+    ws = get_workouts(day)
+    st.markdown("#### Current")
+    for _,row in ws.iterrows():
+        e1,e2,e3,e4 = st.columns([4,1,1,1])
+        with e1:
+            st.write(f"**{row['exercise_order']+1}. {row['exercise_name']}** — {row['sets']}×{row['reps']}  \n_{row['notes']}_")
+        with e2:
+            if row['exercise_order']>0 and st.button("Up", key=f"up_{row['id']}"):
+                update_exercise_order(day, row['id'], row['exercise_order']-1); st.rerun()
+        with e3:
+            if row['exercise_order']<len(ws)-1 and st.button("Down", key=f"down_{row['id']}"):
+                update_exercise_order(day, row['id'], row['exercise_order']+1); st.rerun()
+        with e4:
+            if st.button("Delete", key=f"del_{row['id']}"):
+                delete_exercise(row['id']); st.rerun()
+        st.divider()
+
+    st.markdown("#### Add New")
+    with st.form("add_ex"):
+        c1,c2 = st.columns(2)
+        with c1:
+            name = st.text_input("Name")
+            notes = st.text_input("Notes", value="Focus on form")
+        with c2:
+            sets = st.number_input("Sets",1,10,3)
+            reps = st.text_input("Reps", value="10-12")
+        if st.form_submit_button("Add"):
+            if name.strip():
+                add_exercise(day, name.strip(), sets, reps, notes.strip())
+                st.success("Added"); st.rerun()
+
+    st.markdown("#### Replace (Manual)")
+    with st.form("rep_manual"):
+        ex_id = st.selectbox("Pick exercise", options=[(row['id'], f"{row['exercise_order']+1}. {row['exercise_name']}") for _,row in ws.iterrows()],
+                             format_func=lambda x: x[1])[0]
+        c1,c2 = st.columns(2)
+        with c1:
+            new_name = st.text_input("New name")
+            new_notes = st.text_input("New notes")
+        with c2:
+            new_sets = st.number_input("New sets",1,10,3)
+            new_reps = st.text_input("New reps", value="10-12")
+        if st.form_submit_button("Replace"):
+            if new_name.strip():
+                replace_exercise_manually(ex_id, new_name.strip(), new_sets, new_reps.strip(), new_notes.strip())
+                st.success("Replaced"); st.rerun()
+
+def page_calendar():
+    st.markdown("### Calendar")
+    hist = get_workout_history(limit=365)
+    days = set(hist['date'].tolist()) if not hist.empty else set()
+    today = datetime.now()
+    if 'cal_month' not in st.session_state: st.session_state.cal_month = today.month
+    if 'cal_year' not in st.session_state: st.session_state.cal_year = today.year
+    c1,c2,c3 = st.columns([1,2,1])
+    with c1:
+        if st.button("◀ Prev"):
+            st.session_state.cal_month -= 1
+            if st.session_state.cal_month==0: st.session_state.cal_month=12; st.session_state.cal_year-=1
+            st.rerun()
+    with c3:
+        if st.button("Next ▶"):
+            st.session_state.cal_month += 1
+            if st.session_state.cal_month==13: st.session_state.cal_month=1; st.session_state.cal_year+=1
+            st.rerun()
+    with c2:
+        st.markdown(f"#### {datetime(st.session_state.cal_year, st.session_state.cal_month, 1).strftime('%B %Y')}")
+
+    cal = calendar.monthcalendar(st.session_state.cal_year, st.session_state.cal_month)
+    hdr = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+    cols = st.columns(7)
+    for i,dn in enumerate(hdr): cols[i].markdown(f"**{dn}**")
+    for wk in cal:
+        cols = st.columns(7)
+        for i, d in enumerate(wk):
+            if d==0:
+                cols[i].markdown("<div class='calendar-day'>&nbsp;</div>", unsafe_allow_html=True)
+            else:
+                ds = f"{st.session_state.cal_year:04d}-{st.session_state.cal_month:02d}-{d:02d}"
+                classes = "calendar-day"
+                if ds in days: classes += " workout"
+                if ds == datetime.now().strftime("%Y-%m-%d"): classes += " today"
+                cols[i].markdown(f"<div class='{classes}'>{d}</div>", unsafe_allow_html=True)
+
+def page_progress():
+    st.markdown("### Progress")
+    t,w,s = get_stats()
+    a,b,c = st.columns(3)
+    with a:
+        st.markdown("<div class='stat'><div class='value'>%d</div><div class='label'>Total Workouts</div></div>"%t, unsafe_allow_html=True)
+    with b:
+        st.markdown("<div class='stat'><div class='value'>%d</div><div class='label'>This Week</div></div>"%w, unsafe_allow_html=True)
+    with c:
+        st.markdown("<div class='stat'><div class='value'>%d</div><div class='label'>Day Streak</div></div>"%s, unsafe_allow_html=True)
+
+    st.markdown("#### Recent History")
+    hist = get_workout_history(limit=20)
+    if hist.empty:
+        st.info("No workout history yet.")
+    else:
+        for _,r in hist.iterrows():
+            dn = {"dayA":"Day A","dayB":"Day B","dayC":"Day C","Cardio & Core":"Cardio & Core"}.get(r['day'], r['day'])
+            st.write(f"**{dn}** — {r['date']} • {r.get('duration','N/A')} • {r['exercises_completed']} exercises")
+            st.divider()
+    if not hist.empty and st.button("Export CSV"):
+        conn=db_conn()
+        df = pd.read_sql_query("SELECT * FROM workout_history ORDER BY timestamp DESC", conn); conn.close()
+        st.download_button("Download", data=df.to_csv(index=False), file_name=f"fittrack_export_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
+
+def page_profile():
+    st.markdown("### Your Profile")
+    prof = load_profile() or {}
+    with st.form("profile_form", clear_on_submit=False):
+        c1,c2,c3 = st.columns(3)
+        with c1:
+            name = st.text_input("Name", value=prof.get("name",""))
+            units = st.selectbox("Units", ["metric","imperial"], index=(0 if prof.get("units","metric")=="metric" else 1))
+        with c2:
+            height_cm = st.number_input("Height (cm)", 0.0, 300.0, float(prof.get("height_cm") or 0.0), step=0.5)
+            weight_kg = st.number_input("Weight (kg)", 0.0, 500.0, float(prof.get("weight_kg") or 0.0), step=0.1)
+        with c3:
+            goal = st.text_input("Training Goal", value=prof.get("goal",""))
+            theme = st.selectbox("Theme", ["auto","dark"], index=(1 if prof.get("theme","dark")=="dark" else 0))
+        if st.form_submit_button("Save Profile"):
+            save_profile({"name":name.strip(),"units":units,"height_cm":height_cm,"weight_kg":weight_kg,"goal":goal.strip(),"theme":theme})
+            st.success("Profile saved ✔")
+
+    st.markdown("#### Quick Utilities")
+    c1,c2,c3 = st.columns(3)
+    with c1:
+        if st.button("Open Apple Music"):
+            st.components.v1.html("<script>window.openAppleMusic && window.openAppleMusic();</script>", height=0)
+            st.toast("Attempting to open Apple Music…")
+    with c2:
+        if st.button("Allow Notifications"):
             st.components.v1.html("""
-            <iframe src="music://" style="display:none;" onload="console.log('Music app opened')" 
-                    onerror="window.open('https://apps.apple.com/app/apple-music/id1108187390', '_blank')"></iframe>
             <script>
-            // Try multiple approaches for iOS
-            setTimeout(function() {
-                // Method 1: Direct location change
-                try {
-                    if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
-                        // Create invisible link and click it
-                        var link = document.createElement('a');
-                        link.href = 'music://';
-                        link.style.display = 'none';
-                        document.body.appendChild(link);
-                        link.click();
-                        document.body.removeChild(link);
-                        
-                        // Fallback after 2 seconds
-                        setTimeout(function() {
-                            if (document.hasFocus()) {
-                                window.open('https://apps.apple.com/app/apple-music/id1108187390', '_blank');
-                            }
-                        }, 2000);
-                    } else {
-                        window.open('https://music.apple.com', '_blank');
-                    }
-                } catch (e) {
-                    window.open('https://music.apple.com', '_blank');
-                }
-            }, 100);
-            </script>
-            """, height=0)
-            st.success("Attempting to open Apple Music...")
-    
-    with col2:
-        if st.button("Enable Notifications"):
-            st.components.v1.html("""
-            <script>
-            if ('Notification' in window) {
-                Notification.requestPermission().then(permission => {
-                    if (permission === 'granted') {
-                        new Notification('FitTrack Pro', {
-                            body: 'Notifications enabled! You\\'ll get timer alerts.',
-                            icon: '/favicon.ico'
-                        });
-                    }
-                });
+            if('Notification' in window){
+              Notification.requestPermission().then(p=>{
+                if(p==='granted'){ new Notification('FitTrack Pro', {body:'Notifications enabled ✅'}); }
+              });
             }
-            </script>
-            """, height=0)
-            st.success("Notification permission requested!")
-    
-    with col3:
+            </script>""", height=0)
+            st.info("Notification request sent.")
+    with c3:
         if st.button("Keep Screen On"):
             st.components.v1.html("<script>window.requestWakeLock && window.requestWakeLock();</script>", height=0)
-            st.info("Screen will stay on during timers")
+            st.info("Wake lock requested.")
+
+def page_guide():
+    st.markdown("### Guide")
+    st.markdown("""
+- **Three-day split** plus **Cardio & Core**.  
+- Rest **45–60s** between sets. Add load slowly.  
+- Green badges = **Work**. Yellow = **Rest**.  
+- Timers keep true time even after tab switches.  
+- Sounds: test once (tap) to grant audio.  
+- DB path in use: `""" + db_path_used + """`  
+""")
+
+# =========================
+# MAIN
+# =========================
+def main():
+    init_database()
+    init_timer_state()
 
     if db_loaded:
-        st.success(f"Loaded {len(exercise_db)} exercises from megaGymDataset.csv")
+        st.caption(f"✅ Loaded {len(exercise_db)} exercises from: **{db_path_used}**")
     else:
-        st.info("Using default exercise database. Place megaGymDataset.csv in the same folder as the app for the full database.")
-
-    # Timer persistence warning
-    with st.expander("Mobile Timer Important Info", expanded=False):
-        st.markdown("""
-        <div class="warning-box">
-        <strong>Mobile Browser Limitations:</strong><br>
-        • Timers may pause when screen locks or app is backgrounded<br>
-        • For best results, keep screen on during workouts<br>
-        • Consider using the "Keep Screen On" button above<br>
-        • Audio works best with screen active and volume up<br>
-        <br>
-        <strong>Tips for Better Experience:</strong><br>
-        • Add this page to your home screen for app-like experience<br>
-        • Enable notifications for timer alerts<br>
-        • Keep your phone plugged in during workouts<br>
-        • Use Do Not Disturb mode to prevent interruptions
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Sidebar navigation
-    with st.sidebar:
-        st.header("Navigation")
-        page = st.radio(
-            "Select Page",
-            ["Workout", "Cardio & Core", "Browse & Replace", "Edit Workouts",
-             "Calendar", "Progress", "Guide"],
-            label_visibility="collapsed"
-        )
-
-    if page == "Workout":
-        workout_page()
-    elif page == "Cardio & Core":
-        cardio_core_page()
-    elif page == "Browse & Replace":
-        browse_replace_page()
-    elif page == "Edit Workouts":
-        edit_page()
-    elif page == "Calendar":
-        calendar_page()
-    elif page == "Progress":
-        progress_page()
-    elif page == "Guide":
-        guide_page()
-
-def cardio_core_page():
-    st.header("20-Minute Cardio & Core")
-    st.markdown("**Light cardio warm-up followed by core interval training**")
-    
-    # Get core exercises
-    core_exercises = get_core_exercises()
-    exercise_list = core_exercises['exercise_name'].tolist()
-    
-    if not exercise_list:
-        st.error("No core exercises found. Please add some exercises first.")
-        return
-    
-    # Cardio instructions
-    st.subheader("Part 1: Light Cardio (15 minutes)")
-    st.markdown("""
-    Choose one of the following light cardio activities:
-    - **Walking** on treadmill or outdoors
-    - **Stationary bike** at comfortable pace
-    - **Elliptical** with moderate resistance
-    - **Marching in place** with arm movements
-    
-    *Maintain a pace where you can still hold a conversation*
-    """)
-    
-    st.divider()
-    
-    # Audio test section - simplified
-    st.subheader("Audio Test & Setup")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.info("**Test sounds before starting:**")
-        if st.button("Test Countdown"):
-            play_audio("countdown")
-        if st.button("Test Transition"):
-            play_audio("transition")
-        if st.button("Test Completion"):
-            play_audio("completion")
-    
-    with col2:
-        st.info("**Audio troubleshooting:**")
-        st.markdown("""
-        • Volume up & ringer on
-        • Tap screen if no sound
-        • Keep app in foreground
-        • Grant notification permission
-        """)
-    
-    st.divider()
-    
-    # Core interval timer section
-    st.subheader("Part 2: Core Interval Training (5 minutes)")
-    st.markdown("**4 sets × 1 minute work + 10 seconds rest**")
-    
-    # Display current exercise
-    if st.session_state.current_exercise_index < len(exercise_list):
-        current_exercise = exercise_list[st.session_state.current_exercise_index]
-        st.markdown(f'<div class="interval-exercise">Current Exercise: {current_exercise}</div>', 
-                   unsafe_allow_html=True)
-    
-    # Timer controls
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("Start Interval", key="start_interval", disabled=st.session_state.interval_timer_running):
-            st.session_state.interval_timer_running = True
-            st.session_state.interval_timer_start_timestamp = time.time()
-            st.session_state.interval_timer_elapsed = 0
-            st.session_state.current_set = 1
-            st.session_state.current_phase = "WORK"
-            st.session_state.current_exercise_index = 0
-            st.session_state.interval_completed = False
-            st.session_state.last_beep_second = -1
-            st.components.v1.html("<script>window.requestWakeLock && window.requestWakeLock();</script>", height=0)
-            st.rerun()
-    
-    with col2:
-        if st.button("Pause", key="pause_interval", disabled=not st.session_state.interval_timer_running):
-            st.session_state.interval_timer_running = False
-            st.session_state.interval_timer_elapsed = get_actual_elapsed_time('interval_timer_running', 'interval_timer_start_timestamp')
-            st.rerun()
-    
-    with col3:
-        if st.button("Reset", key="reset_interval"):
-            st.session_state.interval_timer_running = False
-            st.session_state.interval_timer_elapsed = 0
-            st.session_state.current_set = 1
-            st.session_state.current_phase = "WORK"
-            st.session_state.current_exercise_index = 0
-            st.session_state.interval_completed = False
-            st.session_state.last_beep_second = -1
-            st.rerun()
-    
-    # Interval timer logic - same as before but with fixed audio
-    if st.session_state.interval_timer_running and not st.session_state.interval_completed:
-        # Calculate actual elapsed time accounting for potential app suspension
-        actual_elapsed = get_actual_elapsed_time('interval_timer_running', 'interval_timer_start_timestamp')
-        st.session_state.interval_timer_elapsed = actual_elapsed
-        
-        total_elapsed = st.session_state.interval_timer_elapsed
-        cycle_duration = 70  # 60 seconds work + 10 seconds rest
-        
-        if total_elapsed < 4 * 60 + 3 * 10:  # Total duration: 4 minutes work + 3 rest periods
-            # Determine current set and phase
-            if total_elapsed < cycle_duration:
-                st.session_state.current_set = 1
-                if total_elapsed < 60:
-                    st.session_state.current_phase = "WORK"
-                    remaining = 60 - total_elapsed
-                    st.session_state.current_exercise_index = 0
-                else:
-                    st.session_state.current_phase = "REST"
-                    remaining = cycle_duration - total_elapsed
-            elif total_elapsed < 2 * cycle_duration:
-                st.session_state.current_set = 2
-                set_elapsed = total_elapsed - cycle_duration
-                if set_elapsed < 60:
-                    st.session_state.current_phase = "WORK"
-                    remaining = 60 - set_elapsed
-                    st.session_state.current_exercise_index = 1 % len(exercise_list)
-                else:
-                    st.session_state.current_phase = "REST"
-                    remaining = cycle_duration - set_elapsed
-            elif total_elapsed < 3 * cycle_duration:
-                st.session_state.current_set = 3
-                set_elapsed = total_elapsed - 2 * cycle_duration
-                if set_elapsed < 60:
-                    st.session_state.current_phase = "WORK"
-                    remaining = 60 - set_elapsed
-                    st.session_state.current_exercise_index = 2 % len(exercise_list)
-                else:
-                    st.session_state.current_phase = "REST"
-                    remaining = cycle_duration - set_elapsed
-            else:
-                st.session_state.current_set = 4
-                set_elapsed = total_elapsed - 3 * cycle_duration
-                if set_elapsed < 60:
-                    st.session_state.current_phase = "WORK"
-                    remaining = 60 - set_elapsed
-                    st.session_state.current_exercise_index = 3 % len(exercise_list)
-                else:
-                    st.session_state.interval_completed = True
-                    st.session_state.interval_timer_running = False
-                    remaining = 0
-        else:
-            st.session_state.interval_completed = True
-            st.session_state.interval_timer_running = False
-            remaining = 0
-        
-        # Display current status and timer
-        if not st.session_state.interval_completed:
-            phase_class = "work-status" if st.session_state.current_phase == "WORK" else "rest-status"
-            st.markdown(f'<div class="interval-status {phase_class}">Set {st.session_state.current_set}/4 - {st.session_state.current_phase}</div>', 
-                       unsafe_allow_html=True)
-            
-            if st.session_state.current_phase == "WORK":
-                current_exercise = exercise_list[st.session_state.current_exercise_index]
-                st.markdown(f'<div class="interval-exercise">Current Exercise: {current_exercise}</div>', 
-                           unsafe_allow_html=True)
-            
-            timer_class = "work-timer" if st.session_state.current_phase == "WORK" else "rest-timer"
-            remaining_time = max(0, remaining)
-            st.markdown(f'<div class="interval-timer-display {timer_class}">{format_time(remaining_time)}</div>', 
-                       unsafe_allow_html=True)
-            
-            # Audio cues - fixed
-            remaining_seconds = int(remaining_time)
-            if remaining_seconds <= 10 and remaining_seconds > 0 and remaining_seconds != st.session_state.last_beep_second:
-                play_audio("countdown")
-                st.session_state.last_beep_second = remaining_seconds
-            
-            if remaining_seconds == 0 and st.session_state.last_beep_second != 0:
-                if st.session_state.current_set == 4 and st.session_state.current_phase == "WORK":
-                    play_audio("completion")
-                else:
-                    play_audio("transition")
-                st.session_state.last_beep_second = 0
-            
-            time.sleep(0.1)
-            st.rerun()
-    
-    elif st.session_state.interval_completed:
-        st.success("Core interval workout complete! Great job!")
-        st.markdown('<div class="interval-timer-display">COMPLETE!</div>', unsafe_allow_html=True)
-        
-        if st.button("Log Workout", type="primary"):
-            log_workout("Cardio & Core", 1, "20 minutes")
-            st.success("Workout logged!")
-            st.rerun()
-    
-    else:
-        st.markdown('<div class="interval-status work-status">Ready to Start - Set 1/4 - WORK</div>', 
-                   unsafe_allow_html=True)
-        if exercise_list:
-            st.markdown(f'<div class="interval-exercise">First Exercise: {exercise_list[0]}</div>', 
-                       unsafe_allow_html=True)
-        st.markdown('<div class="interval-timer-display">01:00</div>', unsafe_allow_html=True)
-    
-    # Rest of the function remains the same (core exercise management)
-    st.divider()
-    
-    # Core exercise management
-    st.subheader("Manage Core Exercises")
-    
-    # Display current exercises
-    st.write("**Current Core Exercises:**")
-    for idx, row in core_exercises.iterrows():
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.write(f"{row['exercise_order'] + 1}. {row['exercise_name']}")
-        with col2:
-            if st.button("Delete", key=f"delete_core_{row['id']}"):
-                delete_core_exercise(row['id'])
-                st.rerun()
-    
-    st.divider()
-    
-    # Browse and add from exercise database
-    st.write("**Add from Exercise Database:**")
-    
-    # Filters for exercise database
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        body_parts = ["All"] + sorted(exercise_db['BodyPart'].dropna().unique().tolist())
-        selected_body_part = st.selectbox("Body Part", body_parts, key="core_body_part")
-    
-    with col2:
-        equipment = ["All"] + sorted(exercise_db['Equipment'].dropna().unique().tolist())
-        selected_equipment = st.selectbox("Equipment", equipment, key="core_equipment")
-    
-    with col3:
-        search_term = st.text_input("Search exercises...", key="core_search")
-    
-    # Filter the database
-    filtered_df = exercise_db.copy()
-    
-    if selected_body_part != "All":
-        filtered_df = filtered_df[filtered_df['BodyPart'] == selected_body_part]
-    
-    if selected_equipment != "All":
-        filtered_df = filtered_df[filtered_df['Equipment'] == selected_equipment]
-    
-    if search_term:
-        filtered_df = filtered_df[filtered_df['Title'].str.contains(search_term, case=False, na=False)]
-    
-    # Display exercises
-    st.write(f"Found {len(filtered_df)} exercises")
-    
-    # Create a scrollable container for exercise database
-    with st.container():
-        for _, exercise in filtered_df.head(20).iterrows():
-            with st.container():
-                st.markdown('<div class="exercise-db-card">', unsafe_allow_html=True)
-                
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    st.markdown(f"**{exercise.get('Title', 'Unknown Exercise')}**")
-                    st.write(f"Body Part: {exercise.get('BodyPart', 'N/A')} | "
-                            f"Equipment: {exercise.get('Equipment', 'N/A')} | "
-                            f"Level: {exercise.get('Level', 'N/A')}")
-                
-                with col2:
-                    if st.button("Add to Core", key=f"add_core_db_{exercise.name}"):
-                        add_core_exercise(exercise.get('Title', ''))
-                        st.success(f"Added '{exercise.get('Title', '')}' to core exercises")
-                        st.rerun()
-                
-                st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.divider()
-    
-    # Manual add option
-    st.write("**Add Custom Exercise:**")
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        new_exercise = st.text_input("Exercise name", key="new_core_exercise")
-    with col2:
-        if st.button("Add", key="add_core_exercise"):
-            if new_exercise:
-                add_core_exercise(new_exercise)
-                st.success(f"Added {new_exercise}")
-                st.rerun()
-
-def workout_page():
-    # Timer section with persistence
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Set Timer")
-
-        # Timer preset
-        preset_options = {
-            "Stopwatch": 0,
-            "30s": 30,
-            "45s": 45,
-            "1min": 60,
-            "90s": 90,
-            "2min": 120,
-            "3min": 180,
-            "5min": 300
-        }
-
-        selected_preset = st.selectbox(
-            "Timer Preset",
-            options=list(preset_options.keys()),
-            index=0
-        )
-
-        if selected_preset != st.session_state.timer_preset:
-            st.session_state.timer_preset = selected_preset
-            st.session_state.timer_elapsed = 0
-            st.session_state.timer_running = False
-            st.session_state.timer_last_beep_second = -1
-
-        timer_col1, timer_col2, timer_col3 = st.columns(3)
-
-        with timer_col1:
-            if st.button("Start", key="start_timer", disabled=st.session_state.timer_running):
-                st.session_state.timer_running = True
-                st.session_state.timer_start_timestamp = time.time() - st.session_state.timer_elapsed
-                st.session_state.timer_last_beep_second = -1
-                st.components.v1.html("<script>window.requestWakeLock && window.requestWakeLock();</script>", height=0)
-                st.rerun()
-
-        with timer_col2:
-            if st.button("Pause", key="pause_timer", disabled=not st.session_state.timer_running):
-                st.session_state.timer_running = False
-                st.session_state.timer_elapsed = get_actual_elapsed_time('timer_running', 'timer_start_timestamp')
-                st.rerun()
-
-        with timer_col3:
-            if st.button("Reset", key="reset_timer"):
-                st.session_state.timer_running = False
-                st.session_state.timer_elapsed = 0
-                st.session_state.timer_last_beep_second = -1
-                st.rerun()
-
-        # Display timer with persistence handling
-        if st.session_state.timer_running:
-            actual_elapsed = get_actual_elapsed_time('timer_running', 'timer_start_timestamp')
-            st.session_state.timer_elapsed = actual_elapsed
-
-            # Handle countdown timers
-            if selected_preset != "Stopwatch":
-                remaining = preset_options[selected_preset] - st.session_state.timer_elapsed
-                if remaining <= 0:
-                    st.session_state.timer_running = False
-                    st.markdown('<div class="timer-display">00:00 Complete</div>', unsafe_allow_html=True)
-                    play_audio("timer")
-                else:
-                    st.markdown(f'<div class="timer-display">{format_time(remaining)}</div>', unsafe_allow_html=True)
-                    
-                    # Audio cues - fixed
-                    remaining_seconds = int(remaining)
-                    if remaining_seconds <= 10 and remaining_seconds > 0 and remaining_seconds != st.session_state.timer_last_beep_second:
-                        play_audio("countdown")
-                        st.session_state.timer_last_beep_second = remaining_seconds
-                    
-                    if remaining_seconds == 0 and st.session_state.timer_last_beep_second != 0:
-                        play_audio("timer")
-                        st.session_state.timer_last_beep_second = 0
-                    
-                    time.sleep(0.1)
-                    st.rerun()
-            else:
-                st.markdown(f'<div class="timer-display">{format_time(st.session_state.timer_elapsed)}</div>', unsafe_allow_html=True)
-                time.sleep(0.1)
-                st.rerun()
-        else:
-            if selected_preset != "Stopwatch" and st.session_state.timer_elapsed == 0:
-                st.markdown(f'<div class="timer-display">{format_time(preset_options[selected_preset])}</div>',
-                          unsafe_allow_html=True)
-            else:
-                display_time = st.session_state.timer_elapsed
-                if selected_preset != "Stopwatch":
-                    display_time = max(0, preset_options[selected_preset] - st.session_state.timer_elapsed)
-                st.markdown(f'<div class="timer-display">{format_time(display_time)}</div>', unsafe_allow_html=True)
-
-    with col2:
-        st.subheader("Workout Timer")
-
-        timer_col1, timer_col2, timer_col3 = st.columns(3)
-        with timer_col1:
-            if st.button("Start", key="start_workout_timer", disabled=st.session_state.workout_timer_running):
-                st.session_state.workout_timer_running = True
-                st.session_state.workout_timer_start_timestamp = time.time() - st.session_state.workout_timer_elapsed
-                st.components.v1.html("<script>window.requestWakeLock && window.requestWakeLock();</script>", height=0)
-                st.rerun()
-
-        with timer_col2:
-            if st.button("Pause", key="pause_workout_timer", disabled=not st.session_state.workout_timer_running):
-                st.session_state.workout_timer_running = False
-                st.session_state.workout_timer_elapsed = get_actual_elapsed_time('workout_timer_running', 'workout_timer_start_timestamp')
-                st.rerun()
-
-        with timer_col3:
-            if st.button("Reset", key="reset_workout_timer"):
-                st.session_state.workout_timer_running = False
-                st.session_state.workout_timer_elapsed = 0
-                st.rerun()
-
-        # Display workout timer with persistence
-        if st.session_state.workout_timer_running:
-            actual_elapsed = get_actual_elapsed_time('workout_timer_running', 'workout_timer_start_timestamp')
-            st.session_state.workout_timer_elapsed = actual_elapsed
-            st.markdown(f'<div class="timer-display">{format_time(st.session_state.workout_timer_elapsed)}</div>',
-                       unsafe_allow_html=True)
-            time.sleep(0.1)
-            st.rerun()
-        else:
-            st.markdown(f'<div class="timer-display">{format_time(st.session_state.workout_timer_elapsed)}</div>',
-                       unsafe_allow_html=True)
-
-    # Rest of workout page remains the same
-    st.divider()
-
-    # Workout selection
-    selected_day = st.selectbox(
-        "Select Workout Day",
-        ["dayA", "dayB", "dayC"],
-        format_func=lambda x: {"dayA": "Day A - Full Body Focus",
-                               "dayB": "Day B - Strength Focus",
-                               "dayC": "Day C - Mobility Focus"}[x]
-    )
-
-    # Get workouts and completion status
-    workouts = get_workouts(selected_day)
-    completion = get_completion_status(selected_day)
-
-    # Progress bar
-    completed_count = sum(1 for i in range(len(workouts)) if completion.get(i, False))
-    progress = completed_count / len(workouts) if len(workouts) > 0 else 0
-
-    st.progress(progress)
-    st.write(f"**{int(progress * 100)}% Complete** ({completed_count}/{len(workouts)})")
-
-    # Exercise list
-    for idx, row in workouts.iterrows():
-        is_completed = completion.get(idx, False)
-
-        with st.container():
-            st.markdown(
-                f'<div class="workout-card {"completed-card" if is_completed else ""}">',
-                unsafe_allow_html=True
-            )
-
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.markdown(f"### {row['exercise_name']}")
-                st.write(f"**{row['sets']} x {row['reps']}**")
-                st.write(f"_{row['notes']}_")
-
-            with col2:
-                if st.button(
-                    "Completed" if is_completed else "Mark Complete",
-                    key=f"complete_{selected_day}_{idx}",
-                    type="primary" if not is_completed else "secondary"
-                ):
-                    toggle_exercise_completion(selected_day, idx, not is_completed)
-                    st.rerun()
-
-                if st.button("Reset", key=f"reset_{selected_day}_{idx}"):
-                    toggle_exercise_completion(selected_day, idx, False)
-                    st.rerun()
-
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    # Celebration section
-    if progress == 1:
-        st.success("Workout Complete! Excellent work!")
-        play_audio("completion")
-        if st.button("Log Workout & Reset", type="primary"):
-            # Log the workout
-            log_workout(selected_day, len(workouts), format_time(st.session_state.workout_timer_elapsed))
-
-            # Reset completion for this day
-            conn = sqlite3.connect('fittrack.db')
-            c = conn.cursor()
-            today = datetime.now().strftime("%Y-%m-%d")
-            c.execute("DELETE FROM exercise_completion WHERE day = ? AND date = ?", (selected_day, today))
-            conn.commit()
-            conn.close()
-
-            # Reset workout timer
-            st.session_state.workout_timer_elapsed = 0
-            st.session_state.workout_timer_running = False
-
-            st.rerun()
-
-def browse_replace_page():
-    st.header("Browse & Replace Exercises")
-
-    # Get current workout exercises for replacement
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        selected_day = st.selectbox(
-            "Select Day for Replacement",
-            ["dayA", "dayB", "dayC"],
-            format_func=lambda x: {"dayA": "Day A", "dayB": "Day B", "dayC": "Day C"}[x],
-            key="browse_day"
-        )
-
-    with col2:
-        workouts = get_workouts(selected_day)
-        exercise_to_replace = st.selectbox(
-            "Exercise to Replace",
-            options=[(row['id'], row['exercise_name']) for _, row in workouts.iterrows()],
-            format_func=lambda x: x[1]
-        )
-
-    st.divider()
-
-    # Filters
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        body_parts = ["All"] + sorted(exercise_db['BodyPart'].dropna().unique().tolist())
-        selected_body_part = st.selectbox("Body Part", body_parts)
-
-    with col2:
-        equipment = ["All"] + sorted(exercise_db['Equipment'].dropna().unique().tolist())
-        selected_equipment = st.selectbox("Equipment", equipment)
-
-    with col3:
-        search_term = st.text_input("Search exercises...")
-
-    # Filter the database
-    filtered_df = exercise_db.copy()
-
-    if selected_body_part != "All":
-        filtered_df = filtered_df[filtered_df['BodyPart'] == selected_body_part]
-
-    if selected_equipment != "All":
-        filtered_df = filtered_df[filtered_df['Equipment'] == selected_equipment]
-
-    if search_term:
-        filtered_df = filtered_df[filtered_df['Title'].str.contains(search_term, case=False, na=False)]
-
-    # Display exercises
-    st.write(f"Found {len(filtered_df)} exercises")
-
-    # Create a scrollable container
-    with st.container():
-        for _, exercise in filtered_df.head(50).iterrows():
-            with st.container():
-                st.markdown('<div class="exercise-db-card">', unsafe_allow_html=True)
-
-                col1, col2 = st.columns([3, 1])
-
-                with col1:
-                    st.markdown(f"**{exercise.get('Title', 'Unknown Exercise')}**")
-                    st.write(f"Body Part: {exercise.get('BodyPart', 'N/A')} | "
-                            f"Equipment: {exercise.get('Equipment', 'N/A')} | "
-                            f"Level: {exercise.get('Level', 'N/A')}")
-
-                with col2:
-                    if st.button("Replace", key=f"replace_{exercise.name}"):
-                        if exercise_to_replace:
-                            notes = f"{exercise.get('Type', 'Exercise')} - {exercise.get('Level', 'All levels')}"
-                            replace_exercise(exercise_to_replace[0], exercise.get('Title', ''), notes)
-                            st.success(f"Replaced '{exercise_to_replace[1]}' with '{exercise.get('Title', '')}'")
-                            st.rerun()
-
-                st.markdown('</div>', unsafe_allow_html=True)
-
-def edit_page():
-    st.header("Edit Workouts")
-
-    selected_day = st.selectbox(
-        "Select Day to Edit",
-        ["dayA", "dayB", "dayC"],
-        format_func=lambda x: {"dayA": "Day A", "dayB": "Day B", "dayC": "Day C"}[x]
-    )
-
-    workouts = get_workouts(selected_day)
-
-    # Display current exercises for reordering and deletion
-    st.subheader("Current Exercises")
-
-    for idx, row in workouts.iterrows():
-        with st.container():
-            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-
-            with col1:
-                st.write(f"**{row['exercise_order'] + 1}. {row['exercise_name']}**")
-                st.write(f"{row['sets']} sets x {row['reps']} - {row['notes']}")
-
-            with col2:
-                # Up button
-                if row['exercise_order'] > 0:
-                    if st.button("Up", key=f"up_{row['id']}"):
-                        update_exercise_order(selected_day, row['id'], row['exercise_order'] - 1)
-                        st.rerun()
-
-            with col3:
-                # Down button
-                if row['exercise_order'] < len(workouts) - 1:
-                    if st.button("Down", key=f"down_{row['id']}"):
-                        update_exercise_order(selected_day, row['id'], row['exercise_order'] + 1)
-                        st.rerun()
-
-            with col4:
-                # Delete button
-                if st.button("Delete", key=f"delete_{row['id']}"):
-                    delete_exercise(row['id'])
-                    st.rerun()
-            st.divider()
-
-    st.divider()
-
-    # NEW: Replace exercises using database
-    st.subheader("Replace Exercise from Database")
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col2:
-        # Select exercise to replace
-        if not workouts.empty:
-            exercise_to_replace = st.selectbox(
-                "Exercise to Replace",
-                options=[(row['id'], f"{row['exercise_order'] + 1}. {row['exercise_name']}") for _, row in workouts.iterrows()],
-                format_func=lambda x: x[1],
-                key="edit_exercise_to_replace"
-            )
-        else:
-            st.info("No exercises to replace")
-            exercise_to_replace = None
-    
-    with col1:
-        if exercise_to_replace:
-            st.info(f"**Replacing:** {exercise_to_replace[1]}")
-
-    # Exercise database filters
-    if exercise_to_replace:
-        st.write("**Browse Exercise Database:**")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            body_parts = ["All"] + sorted(exercise_db['BodyPart'].dropna().unique().tolist())
-            selected_body_part = st.selectbox("Body Part", body_parts, key="edit_body_part")
-        
-        with col2:
-            equipment = ["All"] + sorted(exercise_db['Equipment'].dropna().unique().tolist())
-            selected_equipment = st.selectbox("Equipment", equipment, key="edit_equipment")
-        
-        with col3:
-            search_term = st.text_input("Search exercises...", key="edit_search")
-        
-        # Filter the database
-        filtered_df = exercise_db.copy()
-        
-        if selected_body_part != "All":
-            filtered_df = filtered_df[filtered_df['BodyPart'] == selected_body_part]
-        
-        if selected_equipment != "All":
-            filtered_df = filtered_df[filtered_df['Equipment'] == selected_equipment]
-        
-        if search_term:
-            filtered_df = filtered_df[filtered_df['Title'].str.contains(search_term, case=False, na=False)]
-        
-        # Display exercises from database
-        st.write(f"Found {len(filtered_df)} exercises")
-        
-        with st.container():
-            for _, exercise in filtered_df.head(15).iterrows():
-                with st.container():
-                    st.markdown('<div class="exercise-db-card">', unsafe_allow_html=True)
-                    
-                    col1, col2 = st.columns([3, 1])
-                    
-                    with col1:
-                        st.markdown(f"**{exercise.get('Title', 'Unknown Exercise')}**")
-                        st.write(f"Body Part: {exercise.get('BodyPart', 'N/A')} | "
-                                f"Equipment: {exercise.get('Equipment', 'N/A')} | "
-                                f"Level: {exercise.get('Level', 'N/A')}")
-                    
-                    with col2:
-                        if st.button("Replace", key=f"edit_replace_{exercise.name}"):
-                            notes = f"{exercise.get('Type', 'Exercise')} - {exercise.get('Level', 'All levels')}"
-                            replace_exercise(exercise_to_replace[0], exercise.get('Title', ''), notes)
-                            st.success(f"Replaced '{exercise_to_replace[1].split('. ', 1)[1]}' with '{exercise.get('Title', '')}'")
-                            st.rerun()
-                    
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.divider()
-
-    # Add new exercise
-    st.subheader("Add New Exercise")
-
-    with st.form("add_exercise_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            new_name = st.text_input("Exercise Name")
-            new_notes = st.text_input("Notes", value="Focus on proper form")
-        with col2:
-            new_sets = st.number_input("Sets", min_value=1, max_value=10, value=3)
-            new_reps = st.text_input("Reps", value="10-12")
-
-        submitted = st.form_submit_button("Add Exercise")
-        if submitted:
-            if new_name:
-                add_exercise(selected_day, new_name, new_sets, new_reps, new_notes)
-                st.success(f"Added {new_name} to {selected_day}")
-                st.rerun()
-
-    st.divider()
-
-    # Replace exercise manually
-    st.subheader("Replace Exercise Manually")
-
-    with st.form("replace_exercise_form"):
-        exercise_to_replace_manual = st.selectbox(
-            "Exercise to Replace",
-            options=[(row['id'], f"{row['exercise_order'] + 1}. {row['exercise_name']}") for _, row in workouts.iterrows()],
-            format_func=lambda x: x[1],
-            key="manual_replace_select"
-        )[0]
-
-        st.write("Enter new exercise details:")
-        col1, col2 = st.columns(2)
-        with col1:
-            replace_name = st.text_input("New Exercise Name")
-            replace_notes = st.text_input("New Notes")
-        with col2:
-            replace_sets = st.number_input("New Sets", min_value=1, max_value=10, value=3)
-            replace_reps = st.text_input("New Reps", value="10-12")
-
-        replace_submitted = st.form_submit_button("Replace Exercise")
-        if replace_submitted:
-            if replace_name:
-                replace_exercise_manually(exercise_to_replace_manual, replace_name, replace_sets, replace_reps, replace_notes)
-                st.success(f"Exercise replaced successfully in {selected_day}")
-                st.rerun()
-            else:
-                st.error("New exercise name cannot be empty.")
-
-def calendar_page():
-    st.header("Workout Calendar")
-
-    # Get workout history
-    history = get_workout_history(limit=365)
-    workout_dates = set(history['date'].tolist()) if not history.empty else set()
-
-    # Month navigation
-    today = datetime.now()
-    if 'display_month' not in st.session_state:
-        st.session_state.display_month = today.month
-    if 'display_year' not in st.session_state:
-        st.session_state.display_year = today.year
-
-    col1, col2, col3 = st.columns([1, 2, 1])
-
-    with col1:
-        if st.button("Previous"):
-            st.session_state.display_month -= 1
-            if st.session_state.display_month == 0:
-                st.session_state.display_month = 12
-                st.session_state.display_year -= 1
-            st.rerun()
-
-    with col3:
-        if st.button("Next"):
-            st.session_state.display_month += 1
-            if st.session_state.display_month == 13:
-                st.session_state.display_month = 1
-                st.session_state.display_year += 1
-            st.rerun()
-
-    display_year = st.session_state.display_year
-    display_month = st.session_state.display_month
-    display_date_obj = datetime(display_year, display_month, 1)
-
-    with col2:
-        st.markdown(f"<h2 style='text-align: center'>{display_date_obj.strftime('%B %Y')}</h2>", unsafe_allow_html=True)
-
-    # Create calendar
-    cal = calendar.monthcalendar(display_year, display_month)
-
-    # Day headers
-    days_header = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-    cols = st.columns(7)
-    for i, day_name in enumerate(days_header):
-        cols[i].markdown(f"<div style='text-align: center; font-weight: bold;'>{day_name}</div>", unsafe_allow_html=True)
-
-    # Calendar days
-    for week in cal:
-        cols = st.columns(7)
-        for i, day in enumerate(week):
-            if day == 0:
-                cols[i].markdown('<div class="calendar-day"></div>', unsafe_allow_html=True)
-            else:
-                date_str = f"{display_year:04d}-{display_month:02d}-{day:02d}"
-                is_today = (display_year == today.year and display_month == today.month and day == today.day)
-                is_workout = date_str in workout_dates
-
-                style_class = "calendar-day"
-                if is_today:
-                    style_class += " today"
-                elif is_workout:
-                    style_class += " workout-day"
-
-                cols[i].markdown(f'<div class="{style_class}">{day}</div>', unsafe_allow_html=True)
-
-def progress_page():
-    st.header("Your Progress")
-
-    # Get stats
-    total, this_week, streak = get_stats()
-
-    # Display stats
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.markdown('<div class="stat-card">', unsafe_allow_html=True)
-        st.markdown(f'<div class="stat-value">{total}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="stat-label">Total Workouts</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with col2:
-        st.markdown('<div class="stat-card">', unsafe_allow_html=True)
-        st.markdown(f'<div class="stat-value">{this_week}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="stat-label">This Week</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with col3:
-        st.markdown('<div class="stat-card">', unsafe_allow_html=True)
-        st.markdown(f'<div class="stat-value">{streak}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="stat-label">Day Streak</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # Workout history
-    st.subheader("Recent Workout History")
-
-    history = get_workout_history(limit=20)
-
-    if not history.empty:
-        for _, workout in history.iterrows():
-            day_name = {"dayA": "Day A", "dayB": "Day B", "dayC": "Day C", "Cardio & Core": "Cardio & Core"}.get(workout['day'], workout['day'])
-            st.write(f"**{day_name}** - {workout['date']}")
-            st.write(f"Completed {workout['exercises_completed']} exercises in {workout.get('duration', 'N/A')}")
-            st.divider()
-    else:
-        st.info("No workout history yet. Complete your first workout to see it here!")
-
-    # Export data option
-    if st.button("Export Workout Data"):
-        conn = sqlite3.connect('fittrack.db')
-        all_history = pd.read_sql_query("SELECT * FROM workout_history ORDER BY timestamp DESC", conn)
-        conn.close()
-
-        csv = all_history.to_csv(index=False)
-        st.download_button(
-            label="Download CSV",
-            data=csv,
-            file_name=f"fittrack_export_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
-
-def guide_page():
-    st.header("Workout Guide")
-
-    st.markdown("""
-    ### Program Overview
-    This 4-component fitness program focuses on comprehensive training with emphasis on proper form and progressive overload.
-
-    #### Day A - Full Body Focus
-    - Compound movements for overall strength
-    - Balanced push/pull exercises
-    - Core stability work
-
-    #### Day B - Strength Focus
-    - Higher intensity strength training
-    - Unilateral movements for balance
-    - Targeted muscle group work
-
-    #### Day C - Mobility Focus
-    - Movement quality and flexibility
-    - Active recovery exercises
-    - Corrective movement patterns
-
-    #### Cardio & Core
-    - 15 minutes of light cardio for cardiovascular health
-    - 5 minutes of interval core training for functional strength
-    - Customizable core exercises to target your specific needs
-
-    ### General Guidelines
-    - Focus on proper form over weight
-    - Rest 45-60 seconds between sets
-    - Progress gradually week to week
-    - Listen to your body and adjust as needed
-
-    ### Features of FitTrack Pro
-    - **Persistent Storage**: All your workouts, completions, and history are saved in a SQLite database
-    - **Exercise Database**: Access to thousands of exercises (when megaGymDataset.csv is loaded)
-    - **Smart Replacements**: Easily swap exercises while maintaining your workout structure
-    - **Progress Tracking**: Monitor your consistency with detailed statistics
-    - **Flexible Editing**: Add, remove, or reorder exercises as needed
-    - **Interval Timer**: Custom interval timer for core workouts with work/rest cycles
-    - **Mobile Optimized**: Enhanced audio system and persistence features for mobile use
-
-    ### Mobile App Tips
-    1. **Add to Home Screen**: Save this page to your phone's home screen for quick access
-    2. **Enable Notifications**: Allow notifications for timer alerts
-    3. **Keep Screen Active**: Use the "Keep Screen On" button during workouts
-    4. **Volume Up**: Ensure your volume is up and ringer is on for audio cues
-    5. **Stay in App**: Keep the app in foreground for best timer performance
-
-    ### Tips for Success
-    1. **Consistency is key** - Aim for 3-4 workouts per week
-    2. **Track your progress** - Use the calendar to monitor consistency
-    3. **Progressive overload** - Gradually increase weight or reps
-    4. **Proper nutrition** - Support your training with good nutrition
-    5. **Rest and recovery** - Allow adequate rest between sessions
-    6. **Mix it up** - Use all workout types for balanced fitness
-    """)
+        st.warning("⚠ Could not find your dataset at the specified path. Using a small fallback list.")
+
+    tabs = st.tabs(["🏋️ Workout","🫀 Cardio & Core","🔁 Browse & Replace","✏️ Edit","📅 Calendar","📈 Progress","👤 Profile","📘 Guide"])
+    with tabs[0]: page_workout()
+    with tabs[1]: page_cardio_core()
+    with tabs[2]: page_browse_replace()
+    with tabs[3]: page_edit()
+    with tabs[4]: page_calendar()
+    with tabs[5]: page_progress()
+    with tabs[6]: page_profile()
+    with tabs[7]: page_guide()
 
 if __name__ == "__main__":
     main()
