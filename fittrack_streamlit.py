@@ -268,6 +268,11 @@ def populate_default_workouts(conn):
             ("Mobility Flow", 1, "10 min", "Full body stretching sequence")
         ]
     }
+    c = conn.cursor()
+    for day, exs in default.items():
+        for i, (name, sets, reps, notes) in enumerate(exs):
+            c.execute("INSERT INTO workouts(day,exercise_name,sets,reps,notes,exercise_order) VALUES(?,?,?,?,?,?)", (day, name, sets, reps, notes, i))
+    conn.commit()
 
 def populate_default_core_exercises(conn):
     core = ["Bird-Dog", "Plank", "Side Plank (Right)", "Side Plank (Left)"]
