@@ -230,16 +230,44 @@ def init_database():
             populate_default_core_exercises(conn)
 
 def populate_default_workouts(conn):
-    default = {
-        "dayA":[("Seated Machine Chest Press",3,"10-12","Smooth tempo"), ("Chest-Supported Cable Row",3,"10-12","Squeeze back"), ("Reverse Lunges",3,"10-12 each","Upright torso"), ("Seated Machine Shoulder Press",3,"10-12","Full ROM"), ("Wall Sit",3,"30-45s","Flat back")],
-        "dayB":[("Seated Dumbbell Press",3,"10-12","Controlled"), ("Machine Lat Pulldown",3,"10-12","To chest"), ("Forward Lunges",3,"10-12 each","Stable knee"), ("Face Pull",2,"12-15","External rotation"), ("Triceps Pushdown",2,"12-15","Lockout"), ("Seated Bicep Curl",2,"12-15","No swing")],
-        "dayC":[("Pec Deck Machine",3,"12-15","Smooth arc"), ("Seated Cable Row",3,"10-12","Good posture"), ("Lateral Lunges",3,"10-12 each","Sit back into it"), ("Reverse Pec Deck",2,"12-15","Focus on scaps"), ("Curtsy Lunges",3,"10-12 each","Control the movement")]
+    """Populate database with default workouts"""
+    default_workouts = {
+        "dayA": [
+            ("Dynamic Warm-up", 1, "5-8 min", "Light cardio and dynamic stretching"),
+            ("Seated Machine Chest Press", 3, "10-12", "Control the weight, full range of motion"),
+            ("Chest-Supported Cable Row", 3, "10-12", "Squeeze shoulder blades, controlled movement"),
+            ("Reverse Lunges", 3, "10-12 each", "Step back, keep front knee over ankle"),
+            ("Seated Calf Raise", 2, "12-15", "Full range of motion, pause at top"),
+            ("Seated Machine Shoulder Press", 3, "10-12", "Press straight up, controlled descent"),
+            ("Wall Sit", 3, "30-45 sec", "Back flat against wall, thighs parallel"),
+            ("Pallof Press", 2, "10 each", "Resist rotation, engage core"),
+            ("Cool-down Stretching", 1, "5-10 min", "Focus on major muscle groups")
+        ],
+        "dayB": [
+            ("Movement Prep", 1, "5-8 min", "Joint mobility and activation"),
+            ("Seated Dumbbell Press", 3, "10-12", "Controlled movement, full range"),
+            ("Machine Lat Pulldown", 3, "10-12", "Pull to chest, squeeze lats"),
+            ("Forward Lunges", 3, "10-12 each", "Step forward, return to start"),
+            ("Hip Adduction Machine", 2, "12-15", "Controlled squeeze, pause at end"),
+            ("Seated Lateral Raise", 2, "12-15", "Raise to shoulder height, control down"),
+            ("Face Pull", 2, "12-15", "Pull to face level, external rotation"),
+            ("Triceps Pushdown", 2, "12-15", "Keep elbows at sides, full extension"),
+            ("Seated Bicep Curl", 2, "12-15", "Controlled curl, squeeze at top"),
+            ("Modified Plank", 2, "30-45 sec", "Hold position, breathe steadily")
+        ],
+        "dayC": [
+            ("Gentle Movement", 1, "5-8 min", "Light walking or easy movement"),
+            ("Pec Deck Machine", 3, "12-15", "Smooth arc, squeeze chest"),
+            ("Seated Cable Row", 3, "10-12", "Pull to torso, maintain posture"),
+            ("Lateral Lunges", 3, "10-12 each", "Step to side, push back to center"),
+            ("Standing Calf Raise", 2, "15-20", "Rise up on toes, controlled descent"),
+            ("Seated Cable Fly", 3, "12-15", "Wide arc motion, control the weight"),
+            ("Reverse Pec Deck", 2, "12-15", "Squeeze shoulder blades together"),
+            ("Curtsy Lunges", 3, "10-12 each", "Step behind and across, alternate sides"),
+            ("Seated Knee Raises", 2, "10-12", "Lift knees toward chest"),
+            ("Mobility Flow", 1, "10 min", "Full body stretching sequence")
+        ]
     }
-    c = conn.cursor()
-    for day, exs in default.items():
-        for i, (name, sets, reps, notes) in enumerate(exs):
-            c.execute("INSERT INTO workouts(day,exercise_name,sets,reps,notes,exercise_order) VALUES(?,?,?,?,?,?)", (day, name, sets, reps, notes, i))
-    conn.commit()
 
 def populate_default_core_exercises(conn):
     core = ["Bird-Dog", "Plank", "Side Plank (Right)", "Side Plank (Left)"]
