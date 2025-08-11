@@ -269,7 +269,7 @@ def populate_default_workouts(conn):
         ]
     }
     c = conn.cursor()
-    for day, exs in default.items():
+    for day, exs in default_workouts.items():
         for i, (name, sets, reps, notes) in enumerate(exs):
             c.execute("INSERT INTO workouts(day,exercise_name,sets,reps,notes,exercise_order) VALUES(?,?,?,?,?,?)", (day, name, sets, reps, notes, i))
     conn.commit()
